@@ -156,7 +156,7 @@ class _AdminPageState extends State<AdminPage> {
                 if (_filterUser.isNotEmpty) {
                   events = events
                       .where((e) =>
-                          (e['userEmail']?.toString() ?? '').toLowerCase().contains(_filterUser))
+                      (e['userEmail']?.toString() ?? '').toLowerCase().contains(_filterUser))
                       .toList();
                 }
 
@@ -172,7 +172,7 @@ class _AdminPageState extends State<AdminPage> {
                 return ListView.separated(
                   itemCount: events.length,
                   separatorBuilder: (_, __) =>
-                      const Divider(height: 1, color: Color(0xFFE0E0E0)),
+                  const Divider(height: 1, color: Color(0xFFE0E0E0)),
                   itemBuilder: (context, index) {
                     final e = events[index];
                     return _buildEventRow(e, index);

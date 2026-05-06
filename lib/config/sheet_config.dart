@@ -6,13 +6,16 @@ class SheetColumn {
   final double width;
   final Color headerColor;
   final bool isCompletionField;
+  /// If non-null, this field renders as a dropdown in the edit dialog.
+  final List<String>? options;
 
-  const SheetColumn({
+  SheetColumn({
     required this.key,
     required this.label,
     this.width = 170,
     this.headerColor = const Color(0xFFE0E0E0),
     this.isCompletionField = false,
+    this.options,
   });
 }
 
@@ -23,7 +26,7 @@ class SheetConfig {
   final String? completedField;
   final List<SheetColumn> columns;
 
-  const SheetConfig({
+  SheetConfig({
     required this.id,
     required this.title,
     required this.shortTitle,
@@ -32,15 +35,55 @@ class SheetConfig {
   });
 }
 
-const greyHeader = Color(0xFFD9D9D9);
-const blueHeader = Color(0xFFB4C7E7);
-const creamHeader = Color(0xFFFFF2CC);
+const greyHeader   = Color(0xFFD9D9D9);
+const blueHeader   = Color(0xFFB4C7E7);
+const creamHeader  = Color(0xFFFFF2CC);
 const yellowHeader = Color(0xFFFFFF00);
-const redHeader = Color(0xFFFF0000);
-const greenHeader = Color(0xFF92D050);
-const whiteHeader = Color(0xFFFFFFFF);
+const redHeader    = Color(0xFFFF0000);
+const greenHeader  = Color(0xFF92D050);
+const whiteHeader  = Color(0xFFFFFFFF);
 
-const SheetConfig paedCnsConfig = SheetConfig(
+// ─── Shared option lists ───────────────────────────────────────────────────────
+
+final _platformOptions   = ['WPS', 'Paper', 'Genie SMS', 'Optus SMS', 'Other'];
+final _completedByOptions = [
+  'Parent',
+  'Teacher',
+  'Parent / Teacher',
+  'Parent / carer',
+  'Parent / carer / Teacher',
+  'Other',
+];
+final _questionnaireTypeOptions = [
+  'Conners 4',
+  'ASD Questionnaire',
+  'ASD Admin Questionnaire',
+  'RMOC Assessment',
+  'Behaviour Questionnaire',
+  'CP Follow-up Questionnaire',
+  'Social Work Questionnaire',
+  'Other',
+];
+final _catchmentSiteOptions = [
+  'Armadale',
+  'Cannington',
+  'Fremantle',
+  'Midland',
+  'Rockingham',
+  'Other',
+];
+final _paedClinicOptions = [
+  'Paed-CNS Review Clinic',
+  'Paed-CNS Rv Clinic',
+  'Paediatrician Review',
+  'Paed Clinic',
+  'Other',
+];
+final _cpAsdOptions = ['CP', 'ASD', 'SW', 'Other'];
+
+// ─── Paed & CNS config ────────────────────────────────────────────────────────
+
+final SheetConfig paedCnsConfig = SheetConfig(
   id: 'paed_cns',
   shortTitle: 'Paed & CNS',
   title: 'MHS & WPS CDS Paediatrician & CNS client questionnaire tracking spreadsheet',
@@ -69,30 +112,35 @@ const SheetConfig paedCnsConfig = SheetConfig(
       label: 'Local CDS catchment site',
       width: 180,
       headerColor: blueHeader,
+      options: _catchmentSiteOptions,
     ),
     SheetColumn(
       key: 'paediatricianClinic',
       label: 'Paediatrician\nor Clinic i.e. Paed-CNS Rv Clinic etc',
       width: 260,
       headerColor: blueHeader,
+      options: _paedClinicOptions,
     ),
     SheetColumn(
       key: 'questionnairePlatform',
       label: 'Questionnaire\nplatform',
       width: 150,
       headerColor: creamHeader,
+      options: _platformOptions,
     ),
     SheetColumn(
       key: 'questionnaireType',
       label: 'Questionnaire\ntype',
       width: 160,
       headerColor: creamHeader,
+      options: _questionnaireTypeOptions,
     ),
     SheetColumn(
       key: 'completedBy',
       label: 'Questionnaire to be completed by\n(Parent / carer / Teacher)',
       width: 240,
       headerColor: creamHeader,
+      options: _completedByOptions,
     ),
     SheetColumn(
       key: 'genieSmsSentDate',
@@ -134,7 +182,9 @@ const SheetConfig paedCnsConfig = SheetConfig(
   ],
 );
 
-const SheetConfig clinPsychSwAsdConfig = SheetConfig(
+// ─── Clin Psych / SW / ASD config ────────────────────────────────────────────
+
+final SheetConfig clinPsychSwAsdConfig = SheetConfig(
   id: 'clinpsych_sw_asd',
   shortTitle: 'Clin Psych / SW / ASD',
   title: 'MHS & WPS Clin Psych, SW & ASD client questionnaire tracking spreadsheet',
@@ -163,6 +213,7 @@ const SheetConfig clinPsychSwAsdConfig = SheetConfig(
       label: 'CP/ASD',
       width: 110,
       headerColor: blueHeader,
+      options: _cpAsdOptions,
     ),
     SheetColumn(
       key: 'requestorName',
@@ -175,18 +226,21 @@ const SheetConfig clinPsychSwAsdConfig = SheetConfig(
       label: 'Questionnaire\nplatform',
       width: 150,
       headerColor: creamHeader,
+      options: _platformOptions,
     ),
     SheetColumn(
       key: 'questionnaireType',
       label: 'Questionnaire type',
       width: 190,
       headerColor: creamHeader,
+      options: _questionnaireTypeOptions,
     ),
     SheetColumn(
       key: 'completedBy',
       label: 'Questionnaire to be completed by\n(Parent / carer / Teacher)',
       width: 240,
       headerColor: creamHeader,
+      options: _completedByOptions,
     ),
     SheetColumn(
       key: 'optusSmsSentDate',
@@ -228,7 +282,9 @@ const SheetConfig clinPsychSwAsdConfig = SheetConfig(
   ],
 );
 
-const SheetConfig completedConfig = SheetConfig(
+// ─── Completed / Deleted config ───────────────────────────────────────────────
+
+final SheetConfig completedConfig = SheetConfig(
   id: 'completed',
   shortTitle: 'Completed',
   title: 'COMPLETED / DELETED CDS PAED CLIENT QUESTIONNAIRES',

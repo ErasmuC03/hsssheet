@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import '../config/sheet_config.dart';
 import '../services/mhs_firestore_service.dart';
 import '../services/activity_service.dart';
+import '../services/dropdown_options_service.dart';
 import 'admin_page.dart';
+import 'dropdown_settings_page.dart';
 import 'sheet_page.dart';
 
 class HomePage extends StatefulWidget {
@@ -28,9 +30,9 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    // Log that this user logged in (called once when HomePage is first built
-    // after authentication succeeds).
     _activity.logLogin(widget.user);
+    // Seed dropdown defaults into Firestore if this is the first run.
+    DropdownOptionsService().seedDefaultsIfEmpty();
   }
 
   Future<void> _logout() async {
@@ -62,9 +64,14 @@ class _HomePageState extends State<HomePage> {
 
   void _openAdminDashboard() {
     Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => AdminPage(user: widget.user)),
+    );
+  }
+
+  void _openDropdownSettings() {
+    Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => AdminPage(user: widget.user),
-      ),
+          builder: (_) => DropdownSettingsPage(user: widget.user)),
     );
   }
 
@@ -92,15 +99,20 @@ class _HomePageState extends State<HomePage> {
               icon: const Icon(Icons.bar_chart),
             ),
             IconButton(
+              tooltip: 'Dropdown Settings',
+              onPressed: _openDropdownSettings,
+              icon: const Icon(Icons.tune),
+            ),
+            IconButton(
               tooltip: 'Generate demo data',
               onPressed: _generatingDemoData ? null : _generateDemoData,
               icon: _generatingDemoData
                   ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
-                    )
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Colors.white),
+              )
                   : const Icon(Icons.dataset),
             ),
             IconButton(

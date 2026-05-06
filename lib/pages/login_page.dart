@@ -9,132 +9,156 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
 
+  bool _isLogin = true;
   bool _loading = false;
-  bool _createMode = false;
+  String? _errorMessage;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
 
   Future<void> _submit() async {
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
 
     if (email.isEmpty || password.isEmpty) {
-      _showMessage('Enter email and password.');
+      setState(() => _errorMessage = 'Please enter your email and password.');
       return;
     }
 
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _errorMessage = null;
+    });
 
     try {
-      if (_createMode) {
-        await FirebaseAuth.instance.createUserWithEmailAndPassword(
+      if (_isLogin) {
+        await FirebaseAuth.instance.signInWithEmailAndPassword(
           email: email,
           password: password,
         );
       } else {
-        await FirebaseAuth.instance.signInWithEmailAndPassword(
+        await FirebaseAuth.instance.createUserWithEmailAndPassword(
           email: email,
           password: password,
         );
       }
     } on FirebaseAuthException catch (e) {
-      _showMessage(e.message ?? 'Login failed.');
+      setState(() => _errorMessage = e.message ?? 'Authentication failed.');
     } catch (e) {
-      _showMessage('Something went wrong: $e');
+      setState(() => _errorMessage = e.toString());
     } finally {
-      if (mounted) {
-        setState(() => _loading = false);
-      }
+      if (mounted) setState(() => _loading = false);
     }
-  }
-
-  void _showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FB),
+      backgroundColor: const Color(0xFFF4F6F9),
       body: Center(
         child: Container(
           width: 420,
-          padding: const EdgeInsets.all(28),
+          padding: const EdgeInsets.all(36),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
-            boxShadow: const [
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
               BoxShadow(
-                blurRadius: 18,
-                color: Colors.black12,
-                offset: Offset(0, 8),
+                color: Colors.black.withOpacity(0.10),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
               ),
             ],
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.health_and_safety, size: 52, color: Colors.blue),
-              const SizedBox(height: 16),
+              const Icon(Icons.health_and_safety,
+                  size: 52, color: Color(0xFF2F3A46)),
+              const SizedBox(height: 12),
               const Text(
                 'MHS Questionnaire Tracker',
                 style: TextStyle(
-                  fontSize: 22,
+                  fontSize: 20,
                   fontWeight: FontWeight.bold,
+                  color: Color(0xFF2F3A46),
                 ),
+                textAlign: TextAlign.center,
               ),
               const SizedBox(height: 6),
               Text(
-                _createMode ? 'Create demo account' : 'Sign in',
-                style: const TextStyle(color: Colors.black54),
+                _isLogin ? 'Sign in to continue' : 'Create a new account',
+                style: const TextStyle(fontSize: 14, color: Colors.black54),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 28),
               TextField(
                 controller: _emailController,
+                keyboardType: TextInputType.emailAddress,
                 decoration: const InputDecoration(
                   labelText: 'Email',
+                  prefixIcon: Icon(Icons.email_outlined),
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.email),
                 ),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 16),
               TextField(
                 controller: _passwordController,
                 obscureText: true,
                 decoration: const InputDecoration(
                   labelText: 'Password',
+                  prefixIcon: Icon(Icons.lock_outline),
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.lock),
                 ),
+                onSubmitted: (_) => _submit(),
               ),
-              const SizedBox(height: 20),
+              if (_errorMessage != null) ...[
+                const SizedBox(height: 14),
+                Text(
+                  _errorMessage!,
+                  style: const TextStyle(color: Colors.red, fontSize: 13),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+              const SizedBox(height: 24),
               SizedBox(
                 width: double.infinity,
+                height: 44,
                 child: FilledButton(
                   onPressed: _loading ? null : _submit,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF2F3A46),
+                  ),
                   child: _loading
                       ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                      : Text(_createMode ? 'Create Account' : 'Login'),
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white),
+                        )
+                      : Text(
+                          _isLogin ? 'Sign In' : 'Create Account',
+                          style: const TextStyle(fontSize: 15),
+                        ),
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 16),
               TextButton(
-                onPressed: _loading
-                    ? null
-                    : () {
-                  setState(() => _createMode = !_createMode);
-                },
+                onPressed: () => setState(() {
+                  _isLogin = !_isLogin;
+                  _errorMessage = null;
+                }),
                 child: Text(
-                  _createMode
-                      ? 'Already have an account? Login'
-                      : 'Create demo account',
+                  _isLogin
+                      ? "Don't have an account? Create one"
+                      : 'Already have an account? Sign in',
+                  style: const TextStyle(fontSize: 13),
                 ),
               ),
             ],

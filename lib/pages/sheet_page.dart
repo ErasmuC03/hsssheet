@@ -9,21 +9,28 @@ import '../widgets/edit_record_dialog.dart';
 import '../widgets/history_dialog.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Constants
+// Fixed layout constants (these are the *minimum* / natural widths)
 // ─────────────────────────────────────────────────────────────────────────────
-const double _rowNumberWidth = 48.0;
-const double _actionsWidth = 96.0;
-const double _metaEmailWidth = 180.0;
-const double _metaDateWidth = 140.0;
-const double _rowHeight = 36.0;
-const double _headerHeight = 52.0;
+const double _rowNumberWidth = 42.0;
+const double _checkboxWidth  = 40.0;
+const double _actionsWidth   = 80.0;
+const double _metaEmailWidth = 160.0;
+const double _metaDateWidth  = 130.0;
+const double _rowHeight      = 36.0;
+const double _headerHeight   = 48.0;
 
-const _gridLine = BorderSide(color: Color(0xFFBFC5CC), width: 0.8);
-const _headerBg = Color(0xFFD6DCE4);
-const _evenRow = Colors.white;
-const _oddRow = Color(0xFFF2F5F8);
+const _gridLine   = BorderSide(color: Color(0xFFBFC5CC), width: 0.8);
+const _headerBg   = Color(0xFFD6DCE4);
+const _evenRow    = Colors.white;
+const _oddRow     = Color(0xFFF2F5F8);
 const _selectedRow = Color(0xFFDDEAFA);
-const _lockedRow = Color(0xFFFFEBEB);
+const _lockedRow  = Color(0xFFFFEBEB);
+
+const _hStyle = TextStyle(
+  fontWeight: FontWeight.w700,
+  fontSize: 12,
+  color: Color(0xFF1A2433),
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SheetPage
@@ -32,11 +39,7 @@ class SheetPage extends StatefulWidget {
   final SheetConfig config;
   final User user;
 
-  const SheetPage({
-    super.key,
-    required this.config,
-    required this.user,
-  });
+  const SheetPage({super.key, required this.config, required this.user});
 
   @override
   State<SheetPage> createState() => _SheetPageState();
@@ -48,29 +51,29 @@ class _SheetPageState extends State<SheetPage> {
   final TextEditingController _searchController = TextEditingController();
   final Set<String> _selectedRecordIds = {};
 
-  // Linked scroll controllers so header tracks body horizontally
   final ScrollController _headerScrollController = ScrollController();
-  final ScrollController _bodyHorizontalScrollController = ScrollController();
-  final ScrollController _bodyVerticalScrollController = ScrollController();
+  final ScrollController _bodyHScrollController  = ScrollController();
+  final ScrollController _bodyVScrollController  = ScrollController();
 
   String _search = '';
   bool _moving = false;
 
   bool get _isCompletedTab => widget.config.id == 'completed';
 
-  // Total fixed width for all data columns + extra meta columns
-  double get _totalWidth {
-    final colsWidth = widget.config.columns.fold(0.0, (sum, c) => sum + c.width);
-    return _rowNumberWidth + colsWidth + _metaEmailWidth + _metaDateWidth + _actionsWidth;
-  }
+  /// Sum of all natural column widths (data + fixed columns).
+  double get _naturalDataWidth =>
+      widget.config.columns.fold(0.0, (s, c) => s + c.width);
+
+  double _naturalTotalWidth() =>
+      _rowNumberWidth + _checkboxWidth + _naturalDataWidth +
+      _metaEmailWidth + _metaDateWidth + _actionsWidth;
 
   @override
   void initState() {
     super.initState();
-    // Keep header scroll in sync with body scroll
-    _bodyHorizontalScrollController.addListener(() {
+    _bodyHScrollController.addListener(() {
       if (_headerScrollController.hasClients) {
-        _headerScrollController.jumpTo(_bodyHorizontalScrollController.offset);
+        _headerScrollController.jumpTo(_bodyHScrollController.offset);
       }
     });
   }
@@ -79,12 +82,23 @@ class _SheetPageState extends State<SheetPage> {
   void dispose() {
     _searchController.dispose();
     _headerScrollController.dispose();
-    _bodyHorizontalScrollController.dispose();
-    _bodyVerticalScrollController.dispose();
+    _bodyHScrollController.dispose();
+    _bodyVScrollController.dispose();
     super.dispose();
   }
 
-  // ── Actions ────────────────────────────────────────────────────────────────
+  // ── Scale factor ────────────────────────────────────────────────────────────
+
+  /// Returns a scale factor so that all columns together exactly fill
+  /// [availableWidth]. Never scales below 1.0 (we scroll instead).
+  double _scale(double availableWidth) {
+    final natural = _naturalTotalWidth();
+    if (natural <= 0) return 1.0;
+    final s = availableWidth / natural;
+    return s > 1.0 ? s : 1.0; // never shrink below natural; scroll instead
+  }
+
+  // ── Actions ─────────────────────────────────────────────────────────────────
 
   Future<void> _addRecord() async {
     final values = await showDialog<Map<String, dynamic>>(
@@ -93,31 +107,17 @@ class _SheetPageState extends State<SheetPage> {
       builder: (_) => EditRecordDialog(config: widget.config, record: null),
     );
     if (values == null) return;
-    await _service.createRecord(
-      config: widget.config,
-      values: values,
-      user: widget.user,
-    );
+    await _service.createRecord(config: widget.config, values: values, user: widget.user);
     _message('Record added.');
   }
 
   Future<void> _editRecord(MhsRecord record) async {
-    final lock = await _service.tryLockRecord(
-      recordId: record.id,
-      user: widget.user,
-    );
+    final lock = await _service.tryLockRecord(recordId: record.id, user: widget.user);
     if (!lock.acquired) {
-      final who = lock.lockedByEmail ?? 'another user';
-      _message('This record is currently locked by $who.');
+      _message('This record is currently locked by ${lock.lockedByEmail ?? 'another user'}.');
       return;
     }
-    // Log that user is viewing/editing
-    await _activity.logRecordView(
-      widget.user,
-      record.id,
-      record.text('clientName'),
-      widget.config.id,
-    );
+    await _activity.logRecordView(widget.user, record.id, record.text('clientName'), widget.config.id);
     try {
       final values = await showDialog<Map<String, dynamic>>(
         context: context,
@@ -128,19 +128,8 @@ class _SheetPageState extends State<SheetPage> {
         await _service.releaseLock(recordId: record.id, user: widget.user);
         return;
       }
-      await _service.updateRecordAndUnlock(
-        recordId: record.id,
-        values: values,
-        user: widget.user,
-      );
-      // Log the edit
-      await _activity.logRecordEdit(
-        widget.user,
-        record.id,
-        record.text('clientName'),
-        widget.config.id,
-        values,
-      );
+      await _service.updateRecordAndUnlock(recordId: record.id, values: values, user: widget.user);
+      await _activity.logRecordEdit(widget.user, record.id, record.text('clientName'), widget.config.id, values);
       _message('Record updated.');
     } catch (e) {
       await _service.releaseLock(recordId: record.id, user: widget.user);
@@ -151,15 +140,8 @@ class _SheetPageState extends State<SheetPage> {
   Future<void> _moveCompleted() async {
     setState(() => _moving = true);
     try {
-      final result = await _service.moveCompletedRecords(
-        config: widget.config,
-        user: widget.user,
-      );
-      _message(
-        'Moved ${result.moved}. '
-        'Skipped locked: ${result.skippedLocked}. '
-        'Incomplete: ${result.skippedIncomplete}.',
-      );
+      final result = await _service.moveCompletedRecords(config: widget.config, user: widget.user);
+      _message('Moved ${result.moved}. Locked: ${result.skippedLocked}. Incomplete: ${result.skippedIncomplete}.');
     } catch (e) {
       _message('Move failed: $e');
     } finally {
@@ -168,10 +150,7 @@ class _SheetPageState extends State<SheetPage> {
   }
 
   void _openHistory(MhsRecord record) {
-    showDialog(
-      context: context,
-      builder: (_) => HistoryDialog(record: record, service: _service),
-    );
+    showDialog(context: context, builder: (_) => HistoryDialog(record: record, service: _service));
   }
 
   void _message(String msg) {
@@ -180,13 +159,13 @@ class _SheetPageState extends State<SheetPage> {
   }
 
   List<MhsRecord> _filterRecords(List<MhsRecord> records) {
-    final search = _search.trim().toLowerCase();
-    if (search.isEmpty) return records;
-    return records.where((record) {
-      for (final column in widget.config.columns) {
-        if (record.text(column.key).toLowerCase().contains(search)) return true;
+    final q = _search.trim().toLowerCase();
+    if (q.isEmpty) return records;
+    return records.where((r) {
+      for (final col in widget.config.columns) {
+        if (r.text(col.key).toLowerCase().contains(q)) return true;
       }
-      return record.updatedByEmail.toLowerCase().contains(search);
+      return r.updatedByEmail.toLowerCase().contains(q);
     }).toList();
   }
 
@@ -195,60 +174,58 @@ class _SheetPageState extends State<SheetPage> {
     _message('$label copied.');
   }
 
-  Future<void> _copySelectedRows(List<MhsRecord> visibleRecords) async {
-    final selected = visibleRecords
-        .where((r) => _selectedRecordIds.contains(r.id))
-        .toList();
-    if (selected.isEmpty) {
-      _message('No rows selected.');
-      return;
-    }
-    final header =
-        widget.config.columns.map((c) => c.label.replaceAll('\n', ' ')).join('\t');
-    final rows = selected.map((record) {
-      return widget.config.columns.map((c) => record.text(c.key)).join('\t');
-    }).join('\n');
+  Future<void> _copySelectedRows(List<MhsRecord> visible) async {
+    final selected = visible.where((r) => _selectedRecordIds.contains(r.id)).toList();
+    if (selected.isEmpty) { _message('No rows selected.'); return; }
+    final header = widget.config.columns.map((c) => c.label.replaceAll('\n', ' ')).join('\t');
+    final rows   = selected.map((r) => widget.config.columns.map((c) => r.text(c.key)).join('\t')).join('\n');
     await Clipboard.setData(ClipboardData(text: '$header\n$rows'));
-    _message('${selected.length} selected row(s) copied.');
+    _message('${selected.length} row(s) copied.');
   }
 
-  // ── Build ──────────────────────────────────────────────────────────────────
+  // ── Build ───────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<MhsRecord>>(
       stream: _service.watchRecords(widget.config.id),
       builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Center(child: Text('Error: ${snapshot.error}'));
-        }
-        if (!snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
+        if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}'));
+        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
 
-        final records = snapshot.data!;
+        final records        = snapshot.data!;
         final visibleRecords = _filterRecords(records);
-        final visibleIds = visibleRecords.map((r) => r.id).toSet();
-        final allVisibleSelected = visibleRecords.isNotEmpty &&
-            visibleIds.every(_selectedRecordIds.contains);
+        final visibleIds     = visibleRecords.map((r) => r.id).toSet();
+        final allSelected    = visibleRecords.isNotEmpty && visibleIds.every(_selectedRecordIds.contains);
 
         return Column(
           children: [
             _buildTopToolbar(visibleRecords),
             _buildInfoStrip(visibleRecords),
             _buildLegend(),
-            // ── Frozen header ──────────────────────────────────────────────
-            _buildFrozenHeader(allVisibleSelected, visibleIds),
-            // ── Scrollable body ────────────────────────────────────────────
+            // Use LayoutBuilder so the table knows its available width
             Expanded(
-              child: visibleRecords.isEmpty
-                  ? const Center(
-                      child: Text(
-                        'No records found.',
-                        style: TextStyle(color: Colors.black45),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final availW = constraints.maxWidth;
+                  final scale  = _scale(availW);
+                  final totalW = _naturalTotalWidth() * scale;
+
+                  return Column(
+                    children: [
+                      // Frozen header
+                      _buildFrozenHeader(allSelected, visibleIds, scale, totalW),
+                      // Scrollable body
+                      Expanded(
+                        child: visibleRecords.isEmpty
+                            ? const Center(child: Text('No records found.',
+                                style: TextStyle(color: Colors.black45)))
+                            : _buildBody(visibleRecords, scale, totalW),
                       ),
-                    )
-                  : _buildBody(visibleRecords),
+                    ],
+                  );
+                },
+              ),
             ),
           ],
         );
@@ -256,9 +233,9 @@ class _SheetPageState extends State<SheetPage> {
     );
   }
 
-  // ── Frozen header row ──────────────────────────────────────────────────────
+  // ── Frozen header ────────────────────────────────────────────────────────────
 
-  Widget _buildFrozenHeader(bool allSelected, Set<String> visibleIds) {
+  Widget _buildFrozenHeader(bool allSelected, Set<String> visibleIds, double scale, double totalW) {
     return Container(
       height: _headerHeight,
       decoration: const BoxDecoration(
@@ -268,63 +245,36 @@ class _SheetPageState extends State<SheetPage> {
       child: SingleChildScrollView(
         controller: _headerScrollController,
         scrollDirection: Axis.horizontal,
-        physics: const NeverScrollableScrollPhysics(), // driven by body scroll
+        physics: const NeverScrollableScrollPhysics(),
         child: SizedBox(
-          width: _totalWidth,
-          child: Row(
-            children: [
-              // Row-number header cell
-              _headerCell(width: _rowNumberWidth, child: const Text('#', style: _hStyle)),
-              // Checkbox header
-              _headerCell(
-                width: 46,
-                child: Checkbox(
-                  value: allSelected,
-                  onChanged: (v) {
-                    setState(() {
-                      if (v == true) {
-                        _selectedRecordIds.addAll(visibleIds);
-                      } else {
-                        _selectedRecordIds.removeAll(visibleIds);
-                      }
-                    });
-                  },
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
+          width: totalW,
+          child: Row(children: [
+            _hCell(_rowNumberWidth * scale, const SelectableText('#', style: _hStyle)),
+            _hCell(_checkboxWidth * scale,
+              Checkbox(
+                value: allSelected,
+                onChanged: (v) => setState(() {
+                  if (v == true) _selectedRecordIds.addAll(visibleIds);
+                  else _selectedRecordIds.removeAll(visibleIds);
+                }),
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-              // Data columns
-              ...widget.config.columns.map((col) => _headerCell(
-                    width: col.width,
-                    color: col.headerColor,
-                    child: Text(
-                      col.label.replaceAll('\n', ' '),
-                      style: _hStyle,
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 2,
-                    ),
-                  )),
-              // Meta columns
-              _headerCell(
-                  width: _metaEmailWidth,
-                  child: const Text('Last updated by', style: _hStyle)),
-              _headerCell(
-                  width: _metaDateWidth,
-                  child: const Text('Last updated', style: _hStyle)),
-              _headerCell(
-                  width: _actionsWidth,
-                  child: const Text('Actions', style: _hStyle)),
-            ],
-          ),
+            ),
+            ...widget.config.columns.map((col) => _hCell(
+              col.width * scale,
+              SelectableText(col.label.replaceAll('\n', ' '), style: _hStyle, maxLines: 2),
+              color: col.headerColor,
+            )),
+            _hCell(_metaEmailWidth * scale, const SelectableText('Last updated by', style: _hStyle)),
+            _hCell(_metaDateWidth  * scale, const SelectableText('Last updated',    style: _hStyle)),
+            _hCell(_actionsWidth   * scale, const SelectableText('Actions',         style: _hStyle)),
+          ]),
         ),
       ),
     );
   }
 
-  Widget _headerCell({
-    required double width,
-    required Widget child,
-    Color? color,
-  }) {
+  Widget _hCell(double width, Widget child, {Color? color}) {
     return Container(
       width: width,
       height: _headerHeight,
@@ -338,27 +288,27 @@ class _SheetPageState extends State<SheetPage> {
     );
   }
 
-  // ── Body ───────────────────────────────────────────────────────────────────
+  // ── Body ─────────────────────────────────────────────────────────────────────
 
-  Widget _buildBody(List<MhsRecord> visibleRecords) {
+  Widget _buildBody(List<MhsRecord> records, double scale, double totalW) {
     return Scrollbar(
-      controller: _bodyVerticalScrollController,
+      controller: _bodyVScrollController,
       thumbVisibility: true,
       child: Scrollbar(
-        controller: _bodyHorizontalScrollController,
+        controller: _bodyHScrollController,
         thumbVisibility: true,
         notificationPredicate: (n) => n.metrics.axis == Axis.horizontal,
         child: SingleChildScrollView(
-          controller: _bodyVerticalScrollController,
+          controller: _bodyVScrollController,
           child: SingleChildScrollView(
-            controller: _bodyHorizontalScrollController,
+            controller: _bodyHScrollController,
             scrollDirection: Axis.horizontal,
             child: SizedBox(
-              width: _totalWidth,
+              width: totalW,
               child: Column(
                 children: [
-                  for (int i = 0; i < visibleRecords.length; i++)
-                    _buildRow(visibleRecords[i], i),
+                  for (int i = 0; i < records.length; i++)
+                    _buildRow(records[i], i, scale),
                 ],
               ),
             ),
@@ -368,324 +318,211 @@ class _SheetPageState extends State<SheetPage> {
     );
   }
 
-  Widget _buildRow(MhsRecord record, int index) {
-    final selected = _selectedRecordIds.contains(record.id);
+  Widget _buildRow(MhsRecord record, int index, double scale) {
+    final selected      = _selectedRecordIds.contains(record.id);
     final lockedByOther = record.isLockedByOther(widget.user.uid);
 
-    Color rowBg;
-    if (lockedByOther) {
-      rowBg = _lockedRow;
-    } else if (selected) {
-      rowBg = _selectedRow;
-    } else {
-      rowBg = index.isEven ? _evenRow : _oddRow;
-    }
+    final rowBg = lockedByOther ? _lockedRow
+                : selected      ? _selectedRow
+                : index.isEven  ? _evenRow
+                                : _oddRow;
 
     return GestureDetector(
-      onTap: () {
-        setState(() {
-          if (selected) {
-            _selectedRecordIds.remove(record.id);
-          } else {
-            _selectedRecordIds.add(record.id);
-          }
-        });
-      },
+      onTap: () => setState(() {
+        if (selected) _selectedRecordIds.remove(record.id);
+        else          _selectedRecordIds.add(record.id);
+      }),
       child: Container(
         height: _rowHeight,
         color: rowBg,
-        child: Row(
-          children: [
-            // Row number
-            _dataCell(
-              width: _rowNumberWidth,
-              child: Text(
-                '${index + 1}',
-                style: const TextStyle(fontSize: 11.5, color: Colors.black38),
-                textAlign: TextAlign.center,
-              ),
-              center: true,
+        child: Row(children: [
+          // Row number
+          _dCell(_rowNumberWidth * scale,
+            Text('${index + 1}',
+              style: const TextStyle(fontSize: 11, color: Colors.black38),
+              textAlign: TextAlign.center),
+            center: true),
+          // Checkbox
+          _dCell(_checkboxWidth * scale,
+            Checkbox(
+              value: selected,
+              onChanged: (v) => setState(() {
+                if (v == true) _selectedRecordIds.add(record.id);
+                else           _selectedRecordIds.remove(record.id);
+              }),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            // Checkbox
-            _dataCell(
-              width: 46,
-              child: Checkbox(
-                value: selected,
-                onChanged: (v) {
-                  setState(() {
-                    if (v == true) {
-                      _selectedRecordIds.add(record.id);
-                    } else {
-                      _selectedRecordIds.remove(record.id);
-                    }
-                  });
-                },
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            center: true),
+          // Data columns
+          ...widget.config.columns.map((col) => _buildDataCell(record, col, scale)),
+          // Meta
+          _dCell(_metaEmailWidth * scale,
+            Text(record.updatedByEmail,
+              style: const TextStyle(fontSize: 11.5, color: Colors.black54),
+              overflow: TextOverflow.ellipsis)),
+          _dCell(_metaDateWidth * scale,
+            Text(record.text('updatedAt'),
+              style: const TextStyle(fontSize: 11.5, color: Colors.black54),
+              overflow: TextOverflow.ellipsis)),
+          // Actions
+          _dCell(_actionsWidth * scale,
+            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              _actionBtn(
+                icon: lockedByOther ? Icons.lock : Icons.edit_outlined,
+                color: lockedByOther ? Colors.red : const Color(0xFF0066CC),
+                onTap: lockedByOther ? null : () => _editRecord(record),
               ),
-              center: true,
-            ),
-            // Data columns
-            ...widget.config.columns.map((col) => _buildDataCell(record, col)),
-            // Meta: updated by
-            _dataCell(
-              width: _metaEmailWidth,
-              child: Text(
-                record.updatedByEmail,
-                style: const TextStyle(fontSize: 12, color: Colors.black54),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            // Meta: updated at
-            _dataCell(
-              width: _metaDateWidth,
-              child: Text(
-                record.text('updatedAt'),
-                style: const TextStyle(fontSize: 12, color: Colors.black54),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            // Actions
-            _dataCell(
-              width: _actionsWidth,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  _actionBtn(
-                    icon: lockedByOther ? Icons.lock : Icons.edit_outlined,
-                    color: lockedByOther ? Colors.red : const Color(0xFF0066CC),
-                    onTap: lockedByOther ? null : () => _editRecord(record),
-                  ),
-                  const SizedBox(width: 4),
-                  _actionBtn(
-                    icon: Icons.history,
-                    color: Colors.black45,
-                    onTap: () => _openHistory(record),
-                  ),
-                ],
-              ),
-              center: true,
-            ),
-          ],
-        ),
+              const SizedBox(width: 2),
+              _actionBtn(icon: Icons.history, color: Colors.black45, onTap: () => _openHistory(record)),
+            ]),
+            center: true),
+        ]),
       ),
     );
   }
 
-  Widget _buildDataCell(MhsRecord record, SheetColumn column) {
-    final value = record.text(column.key);
-    final isParcel =
-        column.key.toLowerCase().contains('parcel') || column.key == 'parcel_no';
+  Widget _buildDataCell(MhsRecord record, SheetColumn column, double scale) {
+    final value    = record.text(column.key);
+    final isParcel = column.key.toLowerCase().contains('parcel') || column.key == 'parcel_no';
 
-    Widget content;
-    if (isParcel && value.isNotEmpty) {
-      content = GestureDetector(
-        onTap: () => _copyText(value, 'Parcel No'),
-        child: Text(
-          value,
-          style: const TextStyle(
-            fontSize: 12.5,
-            color: Color(0xFF0066CC),
-            decoration: TextDecoration.underline,
-          ),
-          overflow: TextOverflow.ellipsis,
-        ),
-      );
-    } else {
-      content = Text(
-        value,
-        style: TextStyle(
-          fontSize: 12.5,
-          fontWeight:
-              column.isCompletionField ? FontWeight.w700 : FontWeight.w400,
-          color: column.isCompletionField
-              ? Colors.green.shade800
-              : Colors.black87,
-        ),
-        overflow: TextOverflow.ellipsis,
-      );
-    }
+    final content = isParcel && value.isNotEmpty
+        ? GestureDetector(
+            onTap: () => _copyText(value, 'Parcel No'),
+            child: Text(value,
+              style: const TextStyle(fontSize: 12, color: Color(0xFF0066CC),
+                  decoration: TextDecoration.underline),
+              overflow: TextOverflow.ellipsis))
+        : Text(value,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: column.isCompletionField ? FontWeight.w700 : FontWeight.w400,
+              color: column.isCompletionField ? Colors.green.shade800 : Colors.black87),
+            overflow: TextOverflow.ellipsis);
 
-    return _dataCell(
-      width: column.width,
-      child: Row(
-        children: [
-          Expanded(child: content),
-          if (value.trim().isNotEmpty && !isParcel)
-            InkWell(
-              onTap: () => _copyText(value, column.label.replaceAll('\n', ' ')),
-              child: const Padding(
-                padding: EdgeInsets.only(left: 4),
-                child: Icon(Icons.copy, size: 13, color: Colors.black26),
-              ),
-            ),
-        ],
-      ),
-    );
+    return _dCell(column.width * scale,
+      Row(children: [
+        Expanded(child: content),
+        if (value.trim().isNotEmpty && !isParcel)
+          InkWell(
+            onTap: () => _copyText(value, column.label.replaceAll('\n', ' ')),
+            child: const Padding(
+              padding: EdgeInsets.only(left: 4),
+              child: Icon(Icons.copy, size: 12, color: Colors.black26))),
+      ]));
   }
 
-  Widget _dataCell({
-    required double width,
-    required Widget child,
-    bool center = false,
-  }) {
+  Widget _dCell(double width, Widget child, {bool center = false}) {
     return Container(
       width: width,
       height: _rowHeight,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 6),
       alignment: center ? Alignment.center : Alignment.centerLeft,
       decoration: const BoxDecoration(
-        border: Border(
-          right: _gridLine,
-          bottom: _gridLine,
-        ),
-      ),
+        border: Border(right: _gridLine, bottom: _gridLine)),
       child: child,
     );
   }
 
-  Widget _actionBtn({
-    required IconData icon,
-    required Color color,
-    VoidCallback? onTap,
-  }) {
+  Widget _actionBtn({required IconData icon, required Color color, VoidCallback? onTap}) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(4),
       child: Padding(
         padding: const EdgeInsets.all(4),
-        child: Icon(icon, size: 17, color: onTap == null ? Colors.black26 : color),
-      ),
-    );
+        child: Icon(icon, size: 16, color: onTap == null ? Colors.black26 : color)));
   }
 
-  // ── Top toolbar ────────────────────────────────────────────────────────────
+  // ── Toolbar ──────────────────────────────────────────────────────────────────
 
   Widget _buildTopToolbar(List<MhsRecord> visibleRecords) {
     return Container(
       color: const Color(0xFF2F3A46),
-      height: 52,
+      height: 50,
       padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Row(
-        children: [
-          Text(
-            widget.config.shortTitle,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(width: 16),
-          _toolbarBtn(Icons.add_circle_outline, 'Add record', _addRecord),
-          _toolbarBtn(
-              Icons.copy_all, 'Copy selected rows', () => _copySelectedRows(visibleRecords)),
-          if (widget.config.completedField != null)
-            _toolbarBtn(
-              Icons.drive_file_move,
-              'Move completed',
-              _moving ? null : _moveCompleted,
-              loading: _moving,
-            ),
-          _toolbarBtn(
-            Icons.deselect,
-            'Clear selection',
-            _selectedRecordIds.isEmpty
-                ? null
-                : () => setState(() => _selectedRecordIds.clear()),
-          ),
-          const Spacer(),
-          SizedBox(
-            width: 300,
-            height: 36,
+      child: Row(children: [
+        Text(widget.config.shortTitle,
+          style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+        const SizedBox(width: 12),
+        _tbBtn(Icons.add_circle_outline, 'Add record', _addRecord),
+        _tbBtn(Icons.copy_all, 'Copy selected', () => _copySelectedRows(visibleRecords)),
+        if (widget.config.completedField != null)
+          _tbBtn(Icons.drive_file_move, 'Move completed', _moving ? null : _moveCompleted, loading: _moving),
+        _tbBtn(Icons.deselect, 'Clear selection',
+          _selectedRecordIds.isEmpty ? null : () => setState(() => _selectedRecordIds.clear())),
+        const Spacer(),
+        // Search box grows/shrinks with available space, min 160, max 340
+        ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 160, maxWidth: 340),
+          child: SizedBox(
+            height: 34,
             child: TextField(
               controller: _searchController,
               style: const TextStyle(fontSize: 13),
               decoration: InputDecoration(
-                hintText: 'Search records…',
-                prefixIcon: const Icon(Icons.search, size: 18),
-                suffixIcon: _search.isEmpty
-                    ? null
-                    : IconButton(
-                        tooltip: null,
-                        icon: const Icon(Icons.close, size: 16),
-                        onPressed: () {
-                          _searchController.clear();
-                          setState(() => _search = '');
-                        },
-                      ),
+                hintText: 'Search…',
+                prefixIcon: const Icon(Icons.search, size: 17),
+                suffixIcon: _search.isEmpty ? null : IconButton(
+                  tooltip: null,
+                  icon: const Icon(Icons.close, size: 15),
+                  onPressed: () { _searchController.clear(); setState(() => _search = ''); }),
                 filled: true,
                 fillColor: Colors.white,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(6),
-                  borderSide: BorderSide.none,
-                ),
+                  borderSide: BorderSide.none),
               ),
               onChanged: (v) => setState(() => _search = v),
             ),
           ),
-        ],
-      ),
+        ),
+      ]),
     );
   }
 
-  Widget _toolbarBtn(IconData icon, String tip, VoidCallback? onTap,
-      {bool loading = false}) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 2),
-      child: IconButton(
-        tooltip: tip,
-        onPressed: onTap,
-        icon: loading
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-              )
-            : Icon(icon, color: onTap == null ? Colors.white38 : Colors.white),
-        padding: EdgeInsets.zero,
-        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-      ),
+  Widget _tbBtn(IconData icon, String tip, VoidCallback? onTap, {bool loading = false}) {
+    return IconButton(
+      tooltip: tip,
+      onPressed: onTap,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+      icon: loading
+          ? const SizedBox(width: 16, height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+          : Icon(icon, size: 20, color: onTap == null ? Colors.white38 : Colors.white),
     );
   }
 
-  // ── Info strip ─────────────────────────────────────────────────────────────
+  // ── Info strip ───────────────────────────────────────────────────────────────
 
   Widget _buildInfoStrip(List<MhsRecord> visibleRecords) {
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              widget.config.title,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.bold,
-                color: _isCompletedTab ? Colors.red : Colors.black87,
-              ),
-            ),
-          ),
-          Text('Visible: ${visibleRecords.length}',
-              style: const TextStyle(fontSize: 12, color: Colors.black54)),
-          const SizedBox(width: 16),
-          Text('Selected: ${_selectedRecordIds.length}',
-              style: const TextStyle(fontSize: 12, color: Colors.black54)),
-        ],
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      child: Row(children: [
+        Expanded(
+          child: Text(widget.config.title,
+            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold,
+                color: _isCompletedTab ? Colors.red : Colors.black87),
+            overflow: TextOverflow.ellipsis)),
+        Text('Visible: ${visibleRecords.length}',
+          style: const TextStyle(fontSize: 11.5, color: Colors.black54)),
+        const SizedBox(width: 14),
+        Text('Selected: ${_selectedRecordIds.length}',
+          style: const TextStyle(fontSize: 11.5, color: Colors.black54)),
+      ]),
     );
   }
 
-  // ── Legend ─────────────────────────────────────────────────────────────────
+  // ── Legend ───────────────────────────────────────────────────────────────────
 
   Widget _buildLegend() {
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
+      padding: const EdgeInsets.fromLTRB(12, 3, 12, 5),
       child: Wrap(
-        spacing: 6,
-        runSpacing: 4,
+        spacing: 5,
+        runSpacing: 3,
         children: const [
           _LegendItem(color: Color(0xFF92D050), text: 'Completed / uploaded'),
           _LegendItem(color: Color(0xFFB4C7E7), text: 'WPS Questionnaire'),
@@ -697,15 +534,6 @@ class _SheetPageState extends State<SheetPage> {
     );
   }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Header text style
-// ─────────────────────────────────────────────────────────────────────────────
-const _hStyle = TextStyle(
-  fontWeight: FontWeight.w700,
-  fontSize: 12,
-  color: Color(0xFF1A2433),
-);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Legend item
@@ -720,20 +548,15 @@ class _LegendItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       decoration: BoxDecoration(
         color: color,
         border: Border.all(color: Colors.black26),
-        borderRadius: BorderRadius.circular(3),
-      ),
-      child: Text(
-        text,
+        borderRadius: BorderRadius.circular(3)),
+      child: Text(text,
         style: TextStyle(
-          fontSize: 11,
+          fontSize: 10.5,
           color: lightText ? Colors.white : Colors.black87,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
+          fontWeight: FontWeight.w600)));
   }
 }

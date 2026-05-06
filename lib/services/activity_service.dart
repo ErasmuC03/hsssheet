@@ -23,16 +23,16 @@ class ActivityService {
   }
 
   Future<void> logLogin(User user) => _log({
-        'action': 'login',
-        'userId': user.uid,
-        'userEmail': user.email ?? '',
-      });
+    'action': 'login',
+    'userId': user.uid,
+    'userEmail': user.email ?? '',
+  });
 
   Future<void> logLogout(User user) => _log({
-        'action': 'logout',
-        'userId': user.uid,
-        'userEmail': user.email ?? '',
-      });
+    'action': 'logout',
+    'userId': user.uid,
+    'userEmail': user.email ?? '',
+  });
 
   Future<void> logRecordView(User user, String recordId, String clientName, String sheetId) =>
       _log({
