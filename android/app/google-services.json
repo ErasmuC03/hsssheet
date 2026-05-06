@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "361124849784",
+    "project_id": "cahs-admin-sheets",
+    "storage_bucket": "cahs-admin-sheets.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:361124849784:android:c7538eea8100d8fe4f258d",
+        "android_client_info": {
+          "package_name": "com.example.hsssheet"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCUpBCMhhRIi3sXcw7brTHQzOyroli50iQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
