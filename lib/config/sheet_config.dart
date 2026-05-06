@@ -176,7 +176,7 @@ final SheetConfig paedCnsConfig = SheetConfig(
     SheetColumn(
       key: 'notifyPaedDate',
       label: 'Notify Paed via Genie Task re:\nQ not returned by due date - deleted & CNP (date)',
-      width: 260,
+      width: 200,
       headerColor: redHeader,
     ),
   ],
@@ -347,7 +347,7 @@ final SheetConfig completedConfig = SheetConfig(
     SheetColumn(
       key: 'qUploadedToGenieDate',
       label: 'Date Q uploaded to Genie',
-      width: 190,
+      width: 130,
       headerColor: greenHeader,
     ),
     SheetColumn(
@@ -355,12 +355,6 @@ final SheetConfig completedConfig = SheetConfig(
       label: 'Date Q uploaded to CDIS',
       width: 190,
       headerColor: greenHeader,
-    ),
-    SheetColumn(
-      key: 'sourceSheetTitle',
-      label: 'Moved from',
-      width: 230,
-      headerColor: greyHeader,
     ),
   ],
 );
