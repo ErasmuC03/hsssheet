@@ -90,12 +90,13 @@ class _SheetPageState extends State<SheetPage> {
   // ── Scale factor ────────────────────────────────────────────────────────────
 
   /// Returns a scale factor so that all columns together exactly fill
-  /// [availableWidth]. Never scales below 1.0 (we scroll instead).
+  /// [availableWidth]. Always scales — up or down — to fit the screen.
+  /// Minimum scale of 0.4 so text never becomes unreadably tiny.
   double _scale(double availableWidth) {
     final natural = _naturalTotalWidth();
     if (natural <= 0) return 1.0;
     final s = availableWidth / natural;
-    return s > 1.0 ? s : 1.0; // never shrink below natural; scroll instead
+    return s.clamp(0.4, 3.0);
   }
 
   // ── Actions ─────────────────────────────────────────────────────────────────
@@ -327,53 +328,66 @@ class _SheetPageState extends State<SheetPage> {
                 : index.isEven  ? _evenRow
                                 : _oddRow;
 
+    // Scale font sizes — clamp so they stay readable
+    final fs     = (12.0 * scale).clamp(8.0, 14.0);
+    final fsSmall = (11.0 * scale).clamp(7.5, 13.0);
+    final rowH   = (_rowHeight * scale).clamp(28.0, 52.0);
+
     return GestureDetector(
       onTap: () => setState(() {
         if (selected) _selectedRecordIds.remove(record.id);
         else          _selectedRecordIds.add(record.id);
       }),
       child: Container(
-        height: _rowHeight,
+        height: rowH,
         color: rowBg,
         child: Row(children: [
           // Row number
-          _dCell(_rowNumberWidth * scale,
+          _dCell(_rowNumberWidth * scale, rowH,
             Text('${index + 1}',
-              style: const TextStyle(fontSize: 11, color: Colors.black38),
+              style: TextStyle(fontSize: fsSmall, color: Colors.black38),
               textAlign: TextAlign.center),
             center: true),
           // Checkbox
-          _dCell(_checkboxWidth * scale,
-            Checkbox(
-              value: selected,
-              onChanged: (v) => setState(() {
-                if (v == true) _selectedRecordIds.add(record.id);
-                else           _selectedRecordIds.remove(record.id);
-              }),
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          _dCell(_checkboxWidth * scale, rowH,
+            Transform.scale(
+              scale: scale.clamp(0.6, 1.0),
+              child: Checkbox(
+                value: selected,
+                onChanged: (v) => setState(() {
+                  if (v == true) _selectedRecordIds.add(record.id);
+                  else           _selectedRecordIds.remove(record.id);
+                }),
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
             ),
             center: true),
           // Data columns
-          ...widget.config.columns.map((col) => _buildDataCell(record, col, scale)),
+          ...widget.config.columns.map((col) => _buildDataCell(record, col, scale, fs, rowH)),
           // Meta
-          _dCell(_metaEmailWidth * scale,
+          _dCell(_metaEmailWidth * scale, rowH,
             Text(record.updatedByEmail,
-              style: const TextStyle(fontSize: 11.5, color: Colors.black54),
+              style: TextStyle(fontSize: fsSmall, color: Colors.black54),
               overflow: TextOverflow.ellipsis)),
-          _dCell(_metaDateWidth * scale,
+          _dCell(_metaDateWidth * scale, rowH,
             Text(record.text('updatedAt'),
-              style: const TextStyle(fontSize: 11.5, color: Colors.black54),
+              style: TextStyle(fontSize: fsSmall, color: Colors.black54),
               overflow: TextOverflow.ellipsis)),
           // Actions
-          _dCell(_actionsWidth * scale,
+          _dCell(_actionsWidth * scale, rowH,
             Row(mainAxisAlignment: MainAxisAlignment.center, children: [
               _actionBtn(
                 icon: lockedByOther ? Icons.lock : Icons.edit_outlined,
                 color: lockedByOther ? Colors.red : const Color(0xFF0066CC),
                 onTap: lockedByOther ? null : () => _editRecord(record),
+                size: (16.0 * scale).clamp(11.0, 20.0),
               ),
-              const SizedBox(width: 2),
-              _actionBtn(icon: Icons.history, color: Colors.black45, onTap: () => _openHistory(record)),
+              SizedBox(width: (2 * scale).clamp(1, 4)),
+              _actionBtn(
+                icon: Icons.history, color: Colors.black45,
+                onTap: () => _openHistory(record),
+                size: (16.0 * scale).clamp(11.0, 20.0),
+              ),
             ]),
             center: true),
         ]),
@@ -381,7 +395,7 @@ class _SheetPageState extends State<SheetPage> {
     );
   }
 
-  Widget _buildDataCell(MhsRecord record, SheetColumn column, double scale) {
+  Widget _buildDataCell(MhsRecord record, SheetColumn column, double scale, double fs, double rowH) {
     final value    = record.text(column.key);
     final isParcel = column.key.toLowerCase().contains('parcel') || column.key == 'parcel_no';
 
@@ -389,33 +403,33 @@ class _SheetPageState extends State<SheetPage> {
         ? GestureDetector(
             onTap: () => _copyText(value, 'Parcel No'),
             child: Text(value,
-              style: const TextStyle(fontSize: 12, color: Color(0xFF0066CC),
+              style: TextStyle(fontSize: fs, color: const Color(0xFF0066CC),
                   decoration: TextDecoration.underline),
               overflow: TextOverflow.ellipsis))
         : Text(value,
             style: TextStyle(
-              fontSize: 12,
+              fontSize: fs,
               fontWeight: column.isCompletionField ? FontWeight.w700 : FontWeight.w400,
               color: column.isCompletionField ? Colors.green.shade800 : Colors.black87),
             overflow: TextOverflow.ellipsis);
 
-    return _dCell(column.width * scale,
+    return _dCell(column.width * scale, rowH,
       Row(children: [
         Expanded(child: content),
         if (value.trim().isNotEmpty && !isParcel)
           InkWell(
             onTap: () => _copyText(value, column.label.replaceAll('\n', ' ')),
-            child: const Padding(
-              padding: EdgeInsets.only(left: 4),
-              child: Icon(Icons.copy, size: 12, color: Colors.black26))),
+            child: Padding(
+              padding: const EdgeInsets.only(left: 3),
+              child: Icon(Icons.copy, size: (12.0 * scale).clamp(9.0, 14.0), color: Colors.black26))),
       ]));
   }
 
-  Widget _dCell(double width, Widget child, {bool center = false}) {
+  Widget _dCell(double width, double height, Widget child, {bool center = false}) {
     return Container(
       width: width,
-      height: _rowHeight,
-      padding: const EdgeInsets.symmetric(horizontal: 6),
+      height: height,
+      padding: const EdgeInsets.symmetric(horizontal: 5),
       alignment: center ? Alignment.center : Alignment.centerLeft,
       decoration: const BoxDecoration(
         border: Border(right: _gridLine, bottom: _gridLine)),
