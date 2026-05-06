@@ -8,6 +8,7 @@ class HistoryDialog extends StatelessWidget {
   final MhsRecord record;
   final MhsFirestoreService service;
 
+
   const HistoryDialog({
     super.key,
     required this.record,
