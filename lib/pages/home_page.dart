@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 
 import '../config/sheet_config.dart';
 import '../services/mhs_firestore_service.dart';
+import '../services/activity_service.dart';
+import 'admin_page.dart';
 import 'sheet_page.dart';
 
 class HomePage extends StatefulWidget {
@@ -19,49 +21,51 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final MhsFirestoreService _service = MhsFirestoreService();
+  final ActivityService _activity = ActivityService();
 
   bool _generatingDemoData = false;
 
+  @override
+  void initState() {
+    super.initState();
+    // Log that this user logged in (called once when HomePage is first built
+    // after authentication succeeds).
+    _activity.logLogin(widget.user);
+  }
+
   Future<void> _logout() async {
+    await _activity.logLogout(widget.user);
     await FirebaseAuth.instance.signOut();
   }
 
   Future<void> _generateDemoData() async {
     setState(() => _generatingDemoData = true);
-
     try {
-      final result = await _service.generateDemoDataOnce(
-        user: widget.user,
-      );
-
+      final result = await _service.generateDemoDataOnce(user: widget.user);
       if (!mounted) return;
-
-      if (result.alreadyGenerated) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Demo data has already been generated.'),
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Generated ${result.created} demo records.'),
-          ),
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to generate demo data: $e'),
+          content: Text(result.alreadyGenerated
+              ? 'Demo data has already been generated.'
+              : 'Generated ${result.created} demo records.'),
         ),
       );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to generate demo data: $e')),
+      );
     } finally {
-      if (mounted) {
-        setState(() => _generatingDemoData = false);
-      }
+      if (mounted) setState(() => _generatingDemoData = false);
     }
+  }
+
+  void _openAdminDashboard() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AdminPage(user: widget.user),
+      ),
+    );
   }
 
   @override
@@ -79,31 +83,32 @@ class _HomePageState extends State<HomePage> {
           centerTitle: true,
           title: const Text(
             'MHS Questionnaire Tracking Workbook',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 21,
-            ),
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 21),
           ),
           actions: [
+            IconButton(
+              tooltip: 'Activity Dashboard',
+              onPressed: _openAdminDashboard,
+              icon: const Icon(Icons.bar_chart),
+            ),
             IconButton(
               tooltip: 'Generate demo data',
               onPressed: _generatingDemoData ? null : _generateDemoData,
               icon: _generatingDemoData
                   ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
+                    )
                   : const Icon(Icons.dataset),
             ),
             IconButton(
               tooltip: 'Refresh',
               onPressed: () {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Live data refreshes automatically.')),
+                  const SnackBar(
+                      content: Text('Live data refreshes automatically.')),
                 );
               },
               icon: const Icon(Icons.refresh),
