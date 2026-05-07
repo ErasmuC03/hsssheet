@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import '../main.dart' show showAppSnackBar;
 import '../services/dropdown_options_service.dart';
 
 /// Maps each dropdown field key → human-readable label shown in settings.
@@ -182,10 +183,7 @@ class _FieldEditorState extends State<_FieldEditor> {
     await widget.service.setOptions(widget.fieldKey, updated);
   }
 
-  void _showSnack(String msg) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(msg)));
-  }
+  void _showSnack(String msg) => showAppSnackBar(msg);
 
   @override
   Widget build(BuildContext context) {

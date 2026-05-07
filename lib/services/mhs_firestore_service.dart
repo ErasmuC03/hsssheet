@@ -409,29 +409,30 @@ class MhsFirestoreService {
     );
   }
 
-  /// Generates fake/de-identified demo data once.
-  ///
-  /// It checks whether demo records already exist.
-  /// If they exist, it will not create duplicates.
+  /// Generates a batch of 100 demo records. Can be called multiple times —
+  /// each call creates a new uniquely-labelled batch (B1, B2 …) so records
+  /// from different runs are easy to tell apart in the UI.
   Future<DemoSeedResult> generateDemoDataOnce({
     required User user,
   }) async {
+    // ── Determine batch number ──────────────────────────────────────────────
+    // Use a high limit so we can correctly count batches even when earlier
+    // ones each hold 100 records (100 records × 50 batches = 5 000).
     final existing = await _records
         .where('isDemoData', isEqualTo: true)
-        .limit(1)
+        .limit(5000)
         .get();
-
-    if (existing.docs.isNotEmpty) {
-      return const DemoSeedResult(
-        created: 0,
-        alreadyGenerated: true,
-      );
-    }
-
-    final batch = _db.batch();
+    final batchNumber = (existing.docs
+                .map((d) => d.data()['demoBatchId']?.toString() ?? '')
+                .toSet()
+                .where((s) => s.isNotEmpty)
+                .length) +
+            1;
+    final batchLabel = 'B$batchNumber';
     final batchId = DateTime.now().millisecondsSinceEpoch.toString();
 
-    final nowData = {
+    // ── Common metadata ────────────────────────────────────────────────────
+    final commonData = <String, dynamic>{
       'createdAt': FieldValue.serverTimestamp(),
       'createdBy': user.uid,
       'createdByEmail': user.email ?? '',
@@ -440,160 +441,208 @@ class MhsFirestoreService {
       'updatedByEmail': user.email ?? '',
       'isDemoData': true,
       'demoBatchId': batchId,
+      'sourceSheet': null,
+      'sourceSheetTitle': null,
     };
 
-    final List<Map<String, dynamic>> demoRecords = [
-      {
-        'sheet': 'paed_cns',
-        'clientName': 'Demo, Amelia',
-        'clientDob': '2017-03-14',
-        'umrn': 'D-100001',
-        'localCdsCatchmentSite': 'Midland',
-        'paediatricianClinic': 'Paed-CNS Review Clinic',
-        'questionnairePlatform': 'WPS',
-        'questionnaireType': 'Conners 4',
-        'completedBy': 'Parent',
-        'genieSmsSentDate': '2026-04-01',
-        'questionnaireDueDate': '2026-04-29',
-        'qUploadedToGenieDate': '2026-05-02',
-        'followUpReminderDate': '',
-        'removeIfNotReceivedDate': '',
-        'notifyPaedDate': '',
-      },
-      {
-        'sheet': 'paed_cns',
-        'clientName': 'Demo, Noah',
-        'clientDob': '2016-11-08',
-        'umrn': 'D-100002',
-        'localCdsCatchmentSite': 'Armadale',
-        'paediatricianClinic': 'Paediatrician Review',
-        'questionnairePlatform': 'Paper',
-        'questionnaireType': 'RMOC Assessment',
-        'completedBy': 'Teacher',
-        'genieSmsSentDate': '2026-04-03',
-        'questionnaireDueDate': '2026-05-01',
-        'qUploadedToGenieDate': '',
-        'followUpReminderDate': '2026-05-03',
-        'removeIfNotReceivedDate': '2026-05-31',
-        'notifyPaedDate': '',
-      },
-      {
-        'sheet': 'paed_cns',
-        'clientName': 'Demo, Isla',
-        'clientDob': '2018-07-21',
-        'umrn': 'D-100003',
-        'localCdsCatchmentSite': 'Cannington',
-        'paediatricianClinic': 'Paed-CNS Rv Clinic',
-        'questionnairePlatform': 'WPS',
-        'questionnaireType': 'ASD Questionnaire',
-        'completedBy': 'Parent / Teacher',
-        'genieSmsSentDate': '2026-04-05',
-        'questionnaireDueDate': '2026-05-03',
-        'qUploadedToGenieDate': '',
-        'followUpReminderDate': '',
-        'removeIfNotReceivedDate': '',
-        'notifyPaedDate': '',
-      },
-      {
-        'sheet': 'paed_cns',
-        'clientName': 'Demo, Oliver',
-        'clientDob': '2015-09-02',
-        'umrn': 'D-100004',
-        'localCdsCatchmentSite': 'Fremantle',
-        'paediatricianClinic': 'Paed Clinic',
-        'questionnairePlatform': 'Genie SMS',
-        'questionnaireType': 'Behaviour Questionnaire',
-        'completedBy': 'Parent',
-        'genieSmsSentDate': '2026-03-20',
-        'questionnaireDueDate': '2026-04-17',
-        'qUploadedToGenieDate': '2026-04-18',
-        'followUpReminderDate': '',
-        'removeIfNotReceivedDate': '',
-        'notifyPaedDate': '',
-      },
-      {
-        'sheet': 'clinpsych_sw_asd',
-        'clientName': 'Demo, Mia',
-        'clientDob': '2014-02-19',
-        'umrn': 'D-200001',
-        'cpAsd': 'ASD',
-        'requestorName': 'Demo Requestor A',
-        'questionnairePlatform': 'WPS',
-        'questionnaireType': 'ASD Admin Questionnaire',
-        'completedBy': 'Parent',
-        'optusSmsSentDate': '2026-04-02',
-        'questionnaireDueDate': '2026-04-30',
-        'qUploadedToCdisDate': '2026-05-01',
-        'followUpReminderDate': '',
-        'removeIfNotReceivedDate': '',
-        'additionalInfo': 'Completed and ready to move.',
-      },
-      {
-        'sheet': 'clinpsych_sw_asd',
-        'clientName': 'Demo, Leo',
-        'clientDob': '2013-12-01',
-        'umrn': 'D-200002',
-        'cpAsd': 'CP',
-        'requestorName': 'Demo Requestor B',
-        'questionnairePlatform': 'Optus SMS',
-        'questionnaireType': 'CP Follow-up Questionnaire',
-        'completedBy': 'Parent / carer',
-        'optusSmsSentDate': '2026-04-04',
-        'questionnaireDueDate': '2026-05-02',
-        'qUploadedToCdisDate': '',
-        'followUpReminderDate': '2026-05-04',
-        'removeIfNotReceivedDate': '2026-06-01',
-        'additionalInfo': 'Awaiting return.',
-      },
-      {
-        'sheet': 'clinpsych_sw_asd',
-        'clientName': 'Demo, Ava',
-        'clientDob': '2017-06-11',
-        'umrn': 'D-200003',
-        'cpAsd': 'SW',
-        'requestorName': 'Demo Requestor C',
-        'questionnairePlatform': 'Paper',
-        'questionnaireType': 'Social Work Questionnaire',
-        'completedBy': 'Teacher',
-        'optusSmsSentDate': '2026-04-08',
-        'questionnaireDueDate': '2026-05-06',
-        'qUploadedToCdisDate': '',
-        'followUpReminderDate': '',
-        'removeIfNotReceivedDate': '',
-        'additionalInfo': 'Paper copy sent.',
-      },
-      {
-        'sheet': 'clinpsych_sw_asd',
-        'clientName': 'Demo, Ethan',
-        'clientDob': '2012-10-27',
-        'umrn': 'D-200004',
-        'cpAsd': 'ASD',
-        'requestorName': 'Demo Requestor D',
-        'questionnairePlatform': 'WPS',
-        'questionnaireType': 'Conners 4',
-        'completedBy': 'Parent / Teacher',
-        'optusSmsSentDate': '2026-03-28',
-        'questionnaireDueDate': '2026-04-25',
-        'qUploadedToCdisDate': '2026-04-26',
-        'followUpReminderDate': '',
-        'removeIfNotReceivedDate': '',
-        'additionalInfo': 'Completed.',
-      },
+    // ── Date helpers ───────────────────────────────────────────────────────
+    // Each batch shifts all dates back by one week so overdue patterns
+    // vary between runs.
+    final today = DateTime.now();
+    final batchOffset = Duration(days: (batchNumber - 1) * 7);
+
+    String fmt(DateTime dt) =>
+        '${dt.year.toString().padLeft(4, '0')}-'
+        '${dt.month.toString().padLeft(2, '0')}-'
+        '${dt.day.toString().padLeft(2, '0')}';
+
+    /// Returns a date string shifted by the batch offset (earlier in the past).
+    String sd(DateTime base) => fmt(base.subtract(batchOffset));
+
+    // ── Data pools ────────────────────────────────────────────────────────
+    const _firstNames = [
+      'Amelia', 'Noah', 'Isla', 'Oliver', 'Charlotte', 'Liam', 'Mia', 'Leo',
+      'Ava', 'Ethan', 'Sophie', 'Jackson', 'Chloe', 'Lucas', 'Harper',
+      'Mason', 'Evelyn', 'Aiden', 'Abigail', 'Logan', 'Emily', 'James',
+      'Elizabeth', 'Benjamin', 'Mila', 'Elijah', 'Luna', 'Alexander',
+      'Scarlett', 'Sebastian', 'Aria', 'Jack', 'Grace', 'Owen', 'Henry',
+      'Penelope', 'Samuel', 'Layla', 'Daniel', 'Riley', 'Matthew', 'Zoey',
+      'Joseph', 'Nora', 'David', 'Lily', 'Carter', 'Eleanor', 'Wyatt',
+      'Hannah', 'Julian', 'Lillian', 'Hudson', 'Addison', 'Grayson', 'Aubrey',
+      'Lincoln', 'Ellie', 'Theodore', 'Stella', 'Ryan', 'Natalie', 'Angel',
+      'Zoe', 'Hunter', 'Victoria', 'Adam', 'Savannah', 'Eli', 'Brooklyn',
+      'Asher', 'Audrey', 'Nathan', 'Bella', 'Isaac', 'Claire', 'Dominic',
+      'Skylar', 'Austin', 'Lucy', 'Levi', 'Paisley', 'Isaiah', 'Everly',
+      'Andrew', 'Anna', 'Caleb', 'Caroline', 'Jordan', 'Genesis', 'Connor',
+      'Aaliyah', 'Colton', 'Kennedy', 'Landon', 'Sadie', 'Tyler', 'Madeline',
+      'Dylan', 'Aurora',
     ];
+
+    const _lastNames = [
+      'Smith', 'Jones', 'Williams', 'Taylor', 'Brown', 'Davies', 'Evans',
+      'Wilson', 'Thomas', 'Roberts', 'Johnson', 'Lewis', 'Walker', 'Robinson',
+      'Wood', 'Thompson', 'White', 'Watson', 'Jackson', 'Wright', 'Green',
+      'Harris', 'Cooper', 'King', 'Lee', 'Martin', 'Clarke', 'James',
+      'Morgan', 'Hughes', 'Edwards', 'Hill', 'Moore', 'Clark', 'Harrison',
+      'Scott', 'Young', 'Morris', 'Hall', 'Ward', 'Turner', 'Collins',
+      'Parker', 'Mitchell', 'Adams', 'Carter', 'Phillips', 'Campbell',
+      'Anderson', 'Rivera',
+    ];
+
+    const _sites = [
+      'Midland', 'Armadale', 'Cannington', 'Fremantle', 'Rockingham',
+      'Joondalup', 'Mandurah', 'Bunbury', 'Geraldton', 'Albany',
+    ];
+
+    const _paedClinics = [
+      'Paed-CNS Review Clinic', 'Paediatrician Review', 'Paed Clinic',
+      'Paed-CNS Rv Clinic', 'Neurology Clinic', 'Developmental Paediatrics',
+      'Community Paediatrics',
+    ];
+
+    const _platforms = ['WPS', 'Paper', 'Genie SMS', 'Optus SMS', 'Email'];
+
+    const _paedQTypes = [
+      'Conners 4', 'RMOC Assessment', 'ASD Questionnaire',
+      'Behaviour Questionnaire', 'Developmental Assessment',
+      'ADHD Rating Scale', 'SDQ', 'Vineland Adaptive Behaviour',
+      'ABAS-3', 'BRIEF-2',
+    ];
+
+    const _cpQTypes = [
+      'ASD Admin Questionnaire', 'CP Follow-up Questionnaire',
+      'Social Work Questionnaire', 'Conners 4', 'ADOS-2 Parent Interview',
+      'Autism Diagnostic Interview', 'SRS-2', 'SCQ', 'ABC', 'VABS-3',
+    ];
+
+    const _completedByOpts = [
+      'Parent', 'Teacher', 'Parent / Teacher', 'Parent / carer',
+      'Parent / carer / Teacher', 'Carer', 'Self',
+    ];
+
+    const _requestors = [
+      'Dr A. Nguyen', 'Dr B. Patel', 'Dr C. Sharma', 'Dr D. Mitchell',
+      'Dr E. Thompson', 'Dr F. Wilson', 'Dr G. Roberts', 'Dr H. Evans',
+      'Dr I. Clarke', 'Dr J. Harrison',
+    ];
+
+    const _cpAsdTypes = ['ASD', 'CP', 'SW'];
+
+    const _additionalInfos = [
+      '', 'Awaiting return.', 'Follow-up sent. No response yet.',
+      'Paper copy sent.', 'Completed and ready to move.',
+      'Client contacted twice.', 'Extension requested.',
+      'Partially completed — awaiting teacher section.',
+      'Sent via alternative platform.', '',
+    ];
+
+    // ── Build 100 records ─────────────────────────────────────────────────
+    // 0-54  → paed_cns (55 records)
+    // 55-99 → clinpsych_sw_asd (45 records)
+    final demoRecords = <Map<String, dynamic>>[];
+
+    for (int i = 0; i < 100; i++) {
+      // Unique name: pick first & last from pools using offset to avoid
+      // the same pair repeating (stride by a prime to cycle differently).
+      final first = _firstNames[i % _firstNames.length];
+      final last = _lastNames[(i * 3) % _lastNames.length];
+      final clientName = 'Demo, $first $last ($batchLabel)';
+
+      // DOB: children aged 5–18, varied by index.
+      final ageYears = 5 + (i % 14);
+      final dobMonth = ((i * 3) % 12) + 1;
+      final dobDay = ((i * 7) % 28) + 1;
+      final dob = DateTime(today.year - ageYears, dobMonth, dobDay);
+
+      // Sent date: 8–95 days ago (stride by 1.2 to spread evenly).
+      final sentDaysAgo = 8 + ((i * 89) % 88); // 8..95
+      final sentDate = today.subtract(Duration(days: sentDaysAgo));
+      final dueDate = sentDate.add(const Duration(days: 28));
+
+      // Status pattern (repeats every 10 records):
+      // 0-3  completed  (40%)
+      // 4-6  overdue    (30%)
+      // 7-9  pending    (30%)
+      final scenario = i % 10;
+      final isCompleted = scenario < 4;
+      final isOverdue = !isCompleted && scenario < 7;
+
+      final uploadDate =
+          isCompleted ? dueDate.add(Duration(days: (i % 5) + 1)) : null;
+      final followUpDate =
+          isOverdue ? dueDate.add(const Duration(days: 2)) : null;
+      final removeDate =
+          isOverdue ? dueDate.add(const Duration(days: 30)) : null;
+
+      final platform = _platforms[i % _platforms.length];
+      final completedBy = _completedByOpts[i % _completedByOpts.length];
+
+      if (i < 55) {
+        // ── Paed & CNS ───────────────────────────────────────────────────
+        final umrn =
+            'D-P${batchNumber.toString().padLeft(2, '0')}${(i + 1).toString().padLeft(3, '0')}';
+        final notifyDate = (isCompleted && i % 3 == 0)
+            ? sd(uploadDate!.add(const Duration(days: 2)))
+            : '';
+
+        demoRecords.add({
+          'sheet': 'paed_cns',
+          'clientName': clientName,
+          'clientDob': fmt(dob),
+          'umrn': umrn,
+          'localCdsCatchmentSite': _sites[i % _sites.length],
+          'paediatricianClinic': _paedClinics[i % _paedClinics.length],
+          'questionnairePlatform': platform,
+          'questionnaireType': _paedQTypes[i % _paedQTypes.length],
+          'completedBy': completedBy,
+          'genieSmsSentDate': sd(sentDate),
+          'questionnaireDueDate': sd(dueDate),
+          'qUploadedToGenieDate':
+              uploadDate != null ? sd(uploadDate) : '',
+          'followUpReminderDate':
+              followUpDate != null ? sd(followUpDate) : '',
+          'removeIfNotReceivedDate':
+              removeDate != null ? sd(removeDate) : '',
+          'notifyPaedDate': notifyDate,
+        });
+      } else {
+        // ── Clin Psych / SW / ASD ────────────────────────────────────────
+        final j = i - 55;
+        final umrn =
+            'D-C${batchNumber.toString().padLeft(2, '0')}${(j + 1).toString().padLeft(3, '0')}';
+
+        demoRecords.add({
+          'sheet': 'clinpsych_sw_asd',
+          'clientName': clientName,
+          'clientDob': fmt(dob),
+          'umrn': umrn,
+          'cpAsd': _cpAsdTypes[j % _cpAsdTypes.length],
+          'requestorName': _requestors[j % _requestors.length],
+          'questionnairePlatform': platform,
+          'questionnaireType': _cpQTypes[j % _cpQTypes.length],
+          'completedBy': completedBy,
+          'optusSmsSentDate': sd(sentDate),
+          'questionnaireDueDate': sd(dueDate),
+          'qUploadedToCdisDate':
+              uploadDate != null ? sd(uploadDate) : '',
+          'followUpReminderDate':
+              followUpDate != null ? sd(followUpDate) : '',
+          'removeIfNotReceivedDate':
+              removeDate != null ? sd(removeDate) : '',
+          'additionalInfo': _additionalInfos[i % _additionalInfos.length],
+        });
+      }
+    }
+
+    // ── Write to Firestore ─────────────────────────────────────────────────
+    // 100 records × 2 ops = 200 — well within the 500-op batch limit.
+    final writeBatch = _db.batch();
 
     for (final record in demoRecords) {
       final ref = _records.doc();
-
-      final data = {
-        ...record,
-        ...nowData,
-        'sourceSheet': null,
-        'sourceSheetTitle': null,
-      };
-
-      batch.set(ref, data);
-
-      batch.set(ref.collection('history').doc(), {
+      final data = {...record, ...commonData};
+      writeBatch.set(ref, data);
+      writeBatch.set(ref.collection('history').doc(), {
         'action': 'demo_data_created',
         'userId': user.uid,
         'userEmail': user.email ?? '',
@@ -602,7 +651,7 @@ class MhsFirestoreService {
       });
     }
 
-    await batch.commit();
+    await writeBatch.commit();
 
     return DemoSeedResult(
       created: demoRecords.length,

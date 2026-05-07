@@ -5,32 +5,40 @@ import '../config/sheet_config.dart';
 import '../models/mhs_record.dart';
 import '../services/mhs_firestore_service.dart';
 import '../services/activity_service.dart';
+import '../main.dart' show showAppSnackBar;
 import '../services/dropdown_options_service.dart';
+import '../services/presence_service.dart';
 import '../widgets/edit_record_dialog.dart';
 import '../widgets/history_dialog.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Fixed layout constants (these are the *minimum* / natural widths)
+// Layout constants
 // ─────────────────────────────────────────────────────────────────────────────
 const double _rowNumberWidth = 42.0;
 const double _checkboxWidth = 40.0;
 const double _actionsWidth = 80.0;
 const double _metaEmailWidth = 160.0;
 const double _metaDateWidth = 130.0;
-const double _rowHeight = 36.0;
-const double _headerHeight = 48.0;
+const double _rowHeight = 38.0;
+const double _headerHeight = 46.0;
 
-const _gridLine = BorderSide(color: Color(0xFFBFC5CC), width: 0.8);
-const _headerBg = Color(0xFFD6DCE4);
-const _evenRow = Colors.white;
-const _oddRow = Color(0xFFF2F5F8);
-const _selectedRow = Color(0xFFDDEAFA);
-const _lockedRow = Color(0xFFFFEBEB);
+// ─────────────────────────────────────────────────────────────────────────────
+// Refined colour palette
+// ─────────────────────────────────────────────────────────────────────────────
+const _kPrimary     = Color(0xFF1E293B);
+const _gridLine     = BorderSide(color: Color(0xFFD0D7E0), width: 0.7);
+const _headerBg     = Color(0xFFEFF2F7);
+const _evenRow      = Colors.white;
+const _oddRow       = Color(0xFFF8FAFC);
+const _selectedRow  = Color(0xFFEFF6FF);
+const _lockedRow    = Color(0xFFFEF2F2);
+const _overdueRow   = Color(0xFFFFFBEB);   // warm amber for past-due
 
 const _hStyle = TextStyle(
   fontWeight: FontWeight.w700,
-  fontSize: 12,
-  color: Color(0xFF1A2433),
+  fontSize: 11.5,
+  color: Color(0xFF374151),
+  letterSpacing: 0.2,
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -50,9 +58,19 @@ class SheetPage extends StatefulWidget {
   State<SheetPage> createState() => _SheetPageState();
 }
 
-class _SheetPageState extends State<SheetPage> {
+class _SheetPageState extends State<SheetPage>
+    with AutomaticKeepAliveClientMixin {
+  /// Keep this tab's state alive when the user switches to another tab so that
+  /// the Firestore stream stays connected and the grid shows instantly on return.
+  @override
+  bool get wantKeepAlive => true;
   final MhsFirestoreService _service = MhsFirestoreService();
   final ActivityService _activity = ActivityService();
+  final PresenceService _presence = PresenceService();
+
+  /// Cached stream — created once in initState so StreamBuilder never
+  /// resubscribes on setState, which would flash a spinner and re-fetch data.
+  late final Stream<List<MhsRecord>> _recordsStream;
   final TextEditingController _searchController = TextEditingController();
   final Set<String> _selectedRecordIds = {};
 
@@ -88,6 +106,9 @@ class _SheetPageState extends State<SheetPage> {
   @override
   void initState() {
     super.initState();
+
+    // Subscribe once — reuse across all rebuilds.
+    _recordsStream = _service.watchRecords(widget.config.id);
 
     _bodyHScrollController.addListener(() {
       if (_headerScrollController.hasClients) {
@@ -127,6 +148,24 @@ class _SheetPageState extends State<SheetPage> {
 
     final s = availableWidth / natural;
     return s.clamp(0.4, 3.0);
+  }
+
+  // ── Overdue detection ───────────────────────────────────────────────────────
+
+  /// Returns true when the record's due date has passed and it is not yet
+  /// marked as completed (only meaningful on active tabs, not the completed tab).
+  bool _isOverdue(MhsRecord record) {
+    final completedField = widget.config.completedField;
+    if (completedField == null) return false;
+    if (record.text(completedField).trim().isNotEmpty) return false;
+
+    final dueDateStr = record.text('questionnaireDueDate');
+    if (dueDateStr.isEmpty) return false;
+
+    final dueDate = DateTime.tryParse(dueDateStr);
+    if (dueDate == null) return false;
+
+    return dueDate.isBefore(DateTime.now());
   }
 
   // ── Inline editing helpers ───────────────────────────────────────────────────
@@ -391,13 +430,7 @@ class _SheetPageState extends State<SheetPage> {
     );
   }
 
-  void _message(String msg) {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg)),
-    );
-  }
+  void _message(String msg) => showAppSnackBar(msg);
 
   List<MhsRecord> _filterRecords(List<MhsRecord> records) {
     final q = _search.trim().toLowerCase();
@@ -456,8 +489,9 @@ class _SheetPageState extends State<SheetPage> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // Required by AutomaticKeepAliveClientMixin
     return StreamBuilder<List<MhsRecord>>(
-      stream: _service.watchRecords(widget.config.id),
+      stream: _recordsStream,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Center(
@@ -554,59 +588,51 @@ class _SheetPageState extends State<SheetPage> {
             children: [
               _hCell(
                 _rowNumberWidth * scale,
-                const SelectableText(
-                  '#',
-                  style: _hStyle,
-                ),
+                const Text('#', style: _hStyle),
               ),
               _hCell(
                 _checkboxWidth * scale,
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Checkbox(
-                    value: allSelected,
-                    onChanged: (v) => setState(() {
-                      if (v == true) {
-                        _selectedRecordIds.addAll(visibleIds);
-                      } else {
-                        _selectedRecordIds.removeAll(visibleIds);
-                      }
-                    }),
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                Center(
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: Checkbox(
+                      value: allSelected,
+                      onChanged: (v) => setState(() {
+                        if (v == true) {
+                          _selectedRecordIds.addAll(visibleIds);
+                        } else {
+                          _selectedRecordIds.removeAll(visibleIds);
+                        }
+                      }),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
                   ),
                 ),
               ),
               ...widget.config.columns.map(
-                    (col) => _hCell(
+                (col) => _hCell(
                   col.width * scale,
-                  SelectableText(
+                  Text(
                     col.label.replaceAll('\n', ' '),
                     style: _hStyle,
                     maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
                   color: col.headerColor,
                 ),
               ),
               _hCell(
                 _metaEmailWidth * scale,
-                const SelectableText(
-                  'Last updated by',
-                  style: _hStyle,
-                ),
+                const Text('Last updated by', style: _hStyle),
               ),
               _hCell(
                 _metaDateWidth * scale,
-                const SelectableText(
-                  'Last updated',
-                  style: _hStyle,
-                ),
+                const Text('Last updated', style: _hStyle),
               ),
               _hCell(
                 _actionsWidth * scale,
-                const SelectableText(
-                  'Actions',
-                  style: _hStyle,
-                ),
+                const Text('Actions', style: _hStyle),
               ),
             ],
           ),
@@ -640,30 +666,29 @@ class _SheetPageState extends State<SheetPage> {
       double scale,
       double totalW,
       ) {
+    // Fixed row height so ListView can skip layout for off-screen rows.
+    final rowH = (_rowHeight * scale).clamp(28.0, 52.0);
+
+    // Horizontal scroll is the outer layer (synced with the frozen header).
+    // Vertical scroll is handled by ListView.builder, which only renders
+    // visible rows — critical for performance with 100+ records.
     return Scrollbar(
-      controller: _bodyVScrollController,
+      controller: _bodyHScrollController,
       thumbVisibility: true,
-      child: Scrollbar(
+      notificationPredicate: (n) => n.metrics.axis == Axis.horizontal,
+      child: SingleChildScrollView(
         controller: _bodyHScrollController,
-        thumbVisibility: true,
-        notificationPredicate: (n) => n.metrics.axis == Axis.horizontal,
-        child: SingleChildScrollView(
-          controller: _bodyVScrollController,
-          child: SingleChildScrollView(
-            controller: _bodyHScrollController,
-            scrollDirection: Axis.horizontal,
-            child: SizedBox(
-              width: totalW,
-              child: Column(
-                children: [
-                  for (int i = 0; i < records.length; i++)
-                    _buildRow(
-                      records[i],
-                      i,
-                      scale,
-                    ),
-                ],
-              ),
+        scrollDirection: Axis.horizontal,
+        child: SizedBox(
+          width: totalW,
+          child: Scrollbar(
+            controller: _bodyVScrollController,
+            thumbVisibility: true,
+            child: ListView.builder(
+              controller: _bodyVScrollController,
+              itemCount: records.length,
+              itemExtent: rowH, // fixed height → O(1) layout per scroll event
+              itemBuilder: (context, i) => _buildRow(records[i], i, scale),
             ),
           ),
         ),
@@ -678,14 +703,17 @@ class _SheetPageState extends State<SheetPage> {
       ) {
     final selected = _selectedRecordIds.contains(record.id);
     final lockedByOther = record.isLockedByOther(widget.user.uid);
+    final overdue = _isOverdue(record);
 
     final rowBg = lockedByOther
         ? _lockedRow
         : selected
-        ? _selectedRow
-        : index.isEven
-        ? _evenRow
-        : _oddRow;
+            ? _selectedRow
+            : overdue
+                ? _overdueRow
+                : index.isEven
+                    ? _evenRow
+                    : _oddRow;
 
     // Scale font sizes — clamp so they stay readable.
     final fs = (12.0 * scale).clamp(8.0, 14.0);
@@ -1064,33 +1092,21 @@ class _SheetPageState extends State<SheetPage> {
 
   Widget _buildTopToolbar(List<MhsRecord> visibleRecords) {
     return Container(
-      color: const Color(0xFF2F3A46),
-      height: 50,
+      color: _kPrimary,
+      height: 52,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Row(
         children: [
-          Text(
-            widget.config.shortTitle,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 15,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(width: 12),
-          _tbBtn(
-            Icons.add_circle_outline,
-            'Add record',
-            _addRecord,
-          ),
+          // Action buttons
+          _tbBtn(Icons.add_circle_outline, 'Add record', _addRecord),
           _tbBtn(
             Icons.copy_all,
             'Copy selected',
-                () => _copySelectedRows(visibleRecords),
+            () => _copySelectedRows(visibleRecords),
           ),
           if (widget.config.completedField != null)
             _tbBtn(
-              Icons.drive_file_move,
+              Icons.drive_file_move_outlined,
               'Move completed',
               _moving ? null : _moveCompleted,
               loading: _moving,
@@ -1102,13 +1118,56 @@ class _SheetPageState extends State<SheetPage> {
                 ? null
                 : () => setState(() => _selectedRecordIds.clear()),
           ),
+
+          const SizedBox(width: 8),
+
+          // Overdue badge
+          StreamBuilder<List<Map<String, dynamic>>>(
+            stream: _presence.watchSheetPresence(widget.config.id),
+            builder: (ctx, snap) {
+              final users = (snap.data ?? [])
+                  .where((p) =>
+                      p['userId']?.toString() != widget.user.uid)
+                  .toList();
+              if (users.isEmpty) return const SizedBox.shrink();
+              return Row(
+                children: [
+                  const SizedBox(width: 4),
+                  const Text(
+                    'Also viewing:',
+                    style: TextStyle(
+                        color: Colors.white54, fontSize: 11.5),
+                  ),
+                  const SizedBox(width: 6),
+                  ...users.take(5).map((p) {
+                    final email =
+                        p['userEmail']?.toString() ?? '?';
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Tooltip(
+                        message: email,
+                        child: _PresenceAvatar(email: email),
+                      ),
+                    );
+                  }),
+                  if (users.length > 5)
+                    Text(
+                      '+${users.length - 5}',
+                      style: const TextStyle(
+                          color: Colors.white54, fontSize: 11),
+                    ),
+                ],
+              );
+            },
+          ),
+
           const Spacer(),
 
-          // Search box grows/shrinks with available space.
+          // Search box
           ConstrainedBox(
             constraints: const BoxConstraints(
               minWidth: 160,
-              maxWidth: 340,
+              maxWidth: 320,
             ),
             child: SizedBox(
               height: 34,
@@ -1117,28 +1176,24 @@ class _SheetPageState extends State<SheetPage> {
                 style: const TextStyle(fontSize: 13),
                 decoration: InputDecoration(
                   hintText: 'Search…',
-                  prefixIcon: const Icon(
-                    Icons.search,
-                    size: 17,
-                  ),
+                  hintStyle:
+                      const TextStyle(color: Colors.black45, fontSize: 13),
+                  prefixIcon: const Icon(Icons.search, size: 17),
                   suffixIcon: _search.isEmpty
                       ? null
                       : IconButton(
-                    tooltip: null,
-                    icon: const Icon(
-                      Icons.close,
-                      size: 15,
-                    ),
-                    onPressed: () {
-                      _searchController.clear();
-                      setState(() => _search = '');
-                    },
-                  ),
+                          icon: const Icon(Icons.close, size: 14),
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() => _search = '');
+                          },
+                        ),
                   filled: true,
                   fillColor: Colors.white,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 10),
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(6),
+                    borderRadius: BorderRadius.circular(7),
                     borderSide: BorderSide.none,
                   ),
                 ),
@@ -1185,40 +1240,67 @@ class _SheetPageState extends State<SheetPage> {
   // ── Info strip ───────────────────────────────────────────────────────────────
 
   Widget _buildInfoStrip(List<MhsRecord> visibleRecords) {
+    final overdueCount =
+        visibleRecords.where(_isOverdue).length;
+
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(
-        horizontal: 12,
-        vertical: 5,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
       child: Row(
         children: [
           Expanded(
             child: Text(
               widget.config.title,
               style: TextStyle(
-                fontSize: 12.5,
-                fontWeight: FontWeight.bold,
-                color: _isCompletedTab ? Colors.red : Colors.black87,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: _isCompletedTab
+                    ? const Color(0xFFDC2626)
+                    : const Color(0xFF374151),
               ),
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          Text(
-            'Visible: ${visibleRecords.length}',
-            style: const TextStyle(
-              fontSize: 11.5,
-              color: Colors.black54,
+          if (overdueCount > 0) ...[
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF3CD),
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: const Color(0xFFFFC107), width: 0.8),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.warning_amber_rounded,
+                      size: 12, color: Color(0xFFB45309)),
+                  const SizedBox(width: 4),
+                  Text(
+                    '$overdueCount overdue',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFFB45309),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(width: 14),
+            const SizedBox(width: 10),
+          ],
           Text(
-            'Selected: ${_selectedRecordIds.length}',
-            style: const TextStyle(
-              fontSize: 11.5,
-              color: Colors.black54,
-            ),
+            '${visibleRecords.length} record${visibleRecords.length == 1 ? '' : 's'}',
+            style: const TextStyle(fontSize: 11.5, color: Colors.black45),
           ),
+          if (_selectedRecordIds.isNotEmpty) ...[
+            const SizedBox(width: 12),
+            Text(
+              '${_selectedRecordIds.length} selected',
+              style: const TextStyle(
+                  fontSize: 11.5, color: Color(0xFF2563EB)),
+            ),
+          ],
         ],
       ),
     );
@@ -1258,6 +1340,61 @@ class _SheetPageState extends State<SheetPage> {
         ],
       ),
     );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Presence avatar (shown in toolbar)
+// ─────────────────────────────────────────────────────────────────────────────
+class _PresenceAvatar extends StatelessWidget {
+  final String email;
+
+  const _PresenceAvatar({required this.email});
+
+  @override
+  Widget build(BuildContext context) {
+    final initials = _initials(email);
+    final color = _colorFor(email);
+    return Container(
+      width: 26,
+      height: 26,
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white.withOpacity(0.6), width: 1.5),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        initials,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+
+  String _initials(String email) {
+    if (email.isEmpty) return '?';
+    final parts = email.split('@').first.split('.');
+    if (parts.length >= 2) {
+      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    }
+    return email[0].toUpperCase();
+  }
+
+  Color _colorFor(String email) {
+    const palette = [
+      Color(0xFF7C3AED),
+      Color(0xFF2563EB),
+      Color(0xFF0891B2),
+      Color(0xFF16A34A),
+      Color(0xFFD97706),
+      Color(0xFFDC2626),
+    ];
+    final h = email.codeUnits.fold(0, (a, b) => a + b);
+    return palette[h % palette.length];
   }
 }
 
