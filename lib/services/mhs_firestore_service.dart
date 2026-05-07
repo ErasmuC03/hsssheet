@@ -263,6 +263,44 @@ class MhsFirestoreService {
     });
   }
 
+  /// Updates a single field on a record without touching the lock or other fields.
+  /// Writes a history entry only when the value actually changes.
+  Future<void> quickUpdateField({
+    required String recordId,
+    required String fieldKey,
+    required String value,
+    required User user,
+  }) async {
+    final ref = _records.doc(recordId);
+
+    await _db.runTransaction((transaction) async {
+      final snap = await transaction.get(ref);
+      if (!snap.exists) throw Exception('Record not found.');
+
+      final before = snap.data() ?? {};
+      final oldValue = before[fieldKey]?.toString() ?? '';
+
+      if (oldValue == value) return; // No change – skip write
+
+      transaction.update(ref, {
+        fieldKey: value,
+        'updatedAt': FieldValue.serverTimestamp(),
+        'updatedBy': user.uid,
+        'updatedByEmail': user.email ?? '',
+      });
+
+      transaction.set(ref.collection('history').doc(), {
+        'action': 'inline_edit',
+        'userId': user.uid,
+        'userEmail': user.email ?? '',
+        'timestamp': FieldValue.serverTimestamp(),
+        'changes': {
+          fieldKey: {'old': oldValue, 'new': value},
+        },
+      });
+    });
+  }
+
   /// Moves completed records from the current active sheet into the completed tab.
   ///
   /// Paed/CNS uses:

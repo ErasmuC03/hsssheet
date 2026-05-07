@@ -5,6 +5,7 @@ import '../config/sheet_config.dart';
 import '../models/mhs_record.dart';
 import '../services/mhs_firestore_service.dart';
 import '../services/activity_service.dart';
+import '../services/dropdown_options_service.dart';
 import '../widgets/edit_record_dialog.dart';
 import '../widgets/history_dialog.dart';
 
@@ -62,6 +63,14 @@ class _SheetPageState extends State<SheetPage> {
   String _search = '';
   bool _moving = false;
 
+  // ── Inline editing ──────────────────────────────────────────────────────────
+  String? _inlineTextRecordId;
+  String? _inlineTextColumnKey;
+  final TextEditingController _inlineTEC = TextEditingController();
+  final FocusNode _inlineFocusNode = FocusNode();
+  final Map<String, List<String>> _cachedDropdownOptions = {};
+  Offset _pendingDropdownPosition = Offset.zero;
+
   bool get _isCompletedTab => widget.config.id == 'completed';
 
   /// Sum of all natural column widths.
@@ -85,11 +94,23 @@ class _SheetPageState extends State<SheetPage> {
         _headerScrollController.jumpTo(_bodyHScrollController.offset);
       }
     });
+
+    // Commit any pending inline text edit when the TextField loses focus
+    // (e.g. user clicks a non-interactive area of the screen).
+    _inlineFocusNode.addListener(() {
+      if (!_inlineFocusNode.hasFocus) {
+        _commitCurrentTextEdit();
+      }
+    });
+
+    _preloadDropdownOptions();
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _inlineTEC.dispose();
+    _inlineFocusNode.dispose();
     _headerScrollController.dispose();
     _bodyHScrollController.dispose();
     _bodyVScrollController.dispose();
@@ -106,6 +127,151 @@ class _SheetPageState extends State<SheetPage> {
 
     final s = availableWidth / natural;
     return s.clamp(0.4, 3.0);
+  }
+
+  // ── Inline editing helpers ───────────────────────────────────────────────────
+
+  /// Pre-loads all dropdown options for columns in this config so the first tap
+  /// on any dropdown cell is instant.
+  Future<void> _preloadDropdownOptions() async {
+    for (final col in widget.config.columns) {
+      if (col.options != null) {
+        final opts = await DropdownOptionsService().getOptions(col.key);
+        if (mounted) {
+          setState(() => _cachedDropdownOptions[col.key] = opts);
+        }
+      }
+    }
+  }
+
+  bool _looksLikeDateField(SheetColumn column) {
+    final key = column.key.toLowerCase();
+    final label = column.label.toLowerCase();
+    return key.contains('date') ||
+        key.contains('dob') ||
+        label.contains('date') ||
+        label.contains('due');
+  }
+
+  /// Commits the currently active inline text edit to Firestore.
+  /// Safe to call even when no edit is in progress.
+  Future<void> _commitCurrentTextEdit() async {
+    if (_inlineTextRecordId == null || _inlineTextColumnKey == null) return;
+
+    final recordId = _inlineTextRecordId!;
+    final fieldKey = _inlineTextColumnKey!;
+    final value = _inlineTEC.text.trim();
+
+    // Clear state first so re-entrant calls are no-ops
+    if (mounted) {
+      setState(() {
+        _inlineTextRecordId = null;
+        _inlineTextColumnKey = null;
+      });
+    }
+
+    try {
+      await _service.quickUpdateField(
+        recordId: recordId,
+        fieldKey: fieldKey,
+        value: value,
+        user: widget.user,
+      );
+    } catch (e) {
+      if (mounted) _message('Save failed: $e');
+    }
+  }
+
+  /// Starts inline text editing for the given cell.
+  Future<void> _startTextEdit(MhsRecord record, SheetColumn column) async {
+    // Clicking the already-active cell is a no-op
+    if (_inlineTextRecordId == record.id && _inlineTextColumnKey == column.key) {
+      return;
+    }
+
+    // Commit any previous text edit before switching cells
+    await _commitCurrentTextEdit();
+
+    if (record.isLockedByOther(widget.user.uid)) {
+      _message('Record is locked by ${record.lockedByEmail}');
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _inlineTextRecordId = record.id;
+      _inlineTextColumnKey = column.key;
+      _inlineTEC.text = record.text(column.key);
+    });
+  }
+
+  /// Shows a popup-menu dropdown for a dropdown column cell.
+  Future<void> _showCellDropdownAtPosition(
+    MhsRecord record,
+    SheetColumn column,
+    Offset globalPos,
+  ) async {
+    // Commit any pending text edit first
+    await _commitCurrentTextEdit();
+
+    if (record.isLockedByOther(widget.user.uid)) {
+      _message('Record is locked by ${record.lockedByEmail}');
+      return;
+    }
+
+    // Ensure options are cached
+    if (!_cachedDropdownOptions.containsKey(column.key)) {
+      final opts = await DropdownOptionsService().getOptions(column.key);
+      if (!mounted) return;
+      setState(() => _cachedDropdownOptions[column.key] = opts);
+    }
+
+    final options = _cachedDropdownOptions[column.key] ?? [];
+    final currentValue = record.text(column.key);
+
+    if (!mounted) return;
+
+    final selected = await showMenu<String?>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        globalPos.dx,
+        globalPos.dy,
+        globalPos.dx + 240,
+        globalPos.dy + 300,
+      ),
+      initialValue: currentValue.isEmpty ? null : currentValue,
+      items: [
+        const PopupMenuItem<String?>(
+          value: '__clear__',
+          child: Text(
+            '— clear —',
+            style: TextStyle(color: Colors.black38, fontSize: 13),
+          ),
+        ),
+        ...options.map(
+          (opt) => PopupMenuItem<String?>(
+            value: opt,
+            child: Text(opt, style: const TextStyle(fontSize: 13)),
+          ),
+        ),
+      ],
+    );
+
+    if (selected == null) return; // Dismissed without selection
+
+    final newValue = selected == '__clear__' ? '' : selected;
+    if (newValue == currentValue) return; // No change
+
+    try {
+      await _service.quickUpdateField(
+        recordId: record.id,
+        fieldKey: column.key,
+        value: newValue,
+        user: widget.user,
+      );
+    } catch (e) {
+      if (mounted) _message('Save failed: $e');
+    }
   }
 
   // ── Actions ─────────────────────────────────────────────────────────────────
@@ -663,44 +829,69 @@ class _SheetPageState extends State<SheetPage> {
       double fs,
       double rowH,
       ) {
+    final cellWidth = column.width * scale;
     final value = record.text(column.key);
-    final isParcel =
-        column.key.toLowerCase().contains('parcel') || column.key == 'parcel_no';
+    final lockedByOther = record.isLockedByOther(widget.user.uid);
+    final isInlineEditing =
+        _inlineTextRecordId == record.id && _inlineTextColumnKey == column.key;
 
-    final content = isParcel && value.isNotEmpty
-        ? GestureDetector(
-      onTap: () => _copyText(value, 'Parcel No'),
-      child: Text(
-        value,
-        style: TextStyle(
-          fontSize: fs,
-          color: const Color(0xFF0066CC),
-          decoration: TextDecoration.underline,
-        ),
-        overflow: TextOverflow.ellipsis,
-      ),
-    )
-        : Text(
-      value,
-      style: TextStyle(
-        fontSize: fs,
-        fontWeight: column.isCompletionField
-            ? FontWeight.w700
-            : FontWeight.w400,
-        color: column.isCompletionField
-            ? Colors.green.shade800
-            : Colors.black87,
-      ),
-      overflow: TextOverflow.ellipsis,
-    );
+    // ── Inline text edit mode ──────────────────────────────────────────────
+    if (isInlineEditing) {
+      return _buildInlineTextCell(column, cellWidth, rowH, fs, scale);
+    }
 
-    return _dCell(
-      column.width * scale,
-      rowH,
-      Row(
+    // ── Display mode ──────────────────────────────────────────────────────
+    final isDropdown = column.options != null;
+
+    Widget displayContent;
+
+    if (isDropdown) {
+      // Dropdown cell: show value + small arrow indicator
+      displayContent = Row(
         children: [
-          Expanded(child: content),
-          if (value.trim().isNotEmpty && !isParcel)
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(
+                fontSize: fs,
+                fontWeight: column.isCompletionField
+                    ? FontWeight.w700
+                    : FontWeight.w400,
+                color: column.isCompletionField
+                    ? Colors.green.shade800
+                    : Colors.black87,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (!lockedByOther)
+            Icon(
+              Icons.arrow_drop_down,
+              size: (14.0 * scale).clamp(10.0, 16.0),
+              color: Colors.black38,
+            ),
+        ],
+      );
+    } else {
+      // Text cell: show value + copy icon
+      displayContent = Row(
+        children: [
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(
+                fontSize: fs,
+                fontWeight: column.isCompletionField
+                    ? FontWeight.w700
+                    : FontWeight.w400,
+                color: column.isCompletionField
+                    ? Colors.green.shade800
+                    : Colors.black87,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (value.trim().isNotEmpty)
             FittedBox(
               fit: BoxFit.scaleDown,
               child: InkWell(
@@ -718,6 +909,111 @@ class _SheetPageState extends State<SheetPage> {
                 ),
               ),
             ),
+        ],
+      );
+    }
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: isDropdown && !lockedByOther
+          ? (d) => _pendingDropdownPosition = d.globalPosition
+          : null,
+      onTap: lockedByOther
+          ? null
+          : () {
+              if (isDropdown) {
+                _showCellDropdownAtPosition(
+                    record, column, _pendingDropdownPosition);
+              } else {
+                _startTextEdit(record, column);
+              }
+            },
+      child: _dCell(cellWidth, rowH, displayContent),
+    );
+  }
+
+  /// Inline text-editing cell (shown instead of the read-only cell).
+  Widget _buildInlineTextCell(
+      SheetColumn column,
+      double cellWidth,
+      double rowH,
+      double fs,
+      double scale,
+      ) {
+    final isDate = _looksLikeDateField(column);
+
+    return Container(
+      width: cellWidth,
+      height: rowH,
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        border: Border.all(color: const Color(0xFF1976D2), width: 1.5),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _inlineTEC,
+              focusNode: _inlineFocusNode,
+              autofocus: true,
+              style: TextStyle(fontSize: fs, color: Colors.black87),
+              decoration: const InputDecoration(
+                isDense: true,
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 2, vertical: 0),
+                border: InputBorder.none,
+              ),
+              onSubmitted: (_) => _commitCurrentTextEdit(),
+            ),
+          ),
+          if (isDate)
+            GestureDetector(
+              onTap: () async {
+                final parsed = DateTime.tryParse(_inlineTEC.text);
+                final picked = await showDatePicker(
+                  context: context,
+                  firstDate: DateTime(2020),
+                  lastDate: DateTime(2035),
+                  initialDate: parsed ?? DateTime.now(),
+                );
+                if (picked != null && mounted) {
+                  _inlineTEC.text =
+                      '${picked.year.toString().padLeft(4, '0')}-'
+                      '${picked.month.toString().padLeft(2, '0')}-'
+                      '${picked.day.toString().padLeft(2, '0')}';
+                  _commitCurrentTextEdit();
+                }
+              },
+              child: Padding(
+                padding: const EdgeInsets.only(left: 2),
+                child: Icon(
+                  Icons.calendar_today,
+                  size: (12.0 * scale).clamp(10.0, 14.0),
+                  color: const Color(0xFF1976D2),
+                ),
+              ),
+            ),
+          const SizedBox(width: 2),
+          // ✓ commit
+          GestureDetector(
+            onTap: _commitCurrentTextEdit,
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 1),
+              child: Icon(Icons.check_circle, size: 15, color: Colors.green),
+            ),
+          ),
+          // ✕ cancel
+          GestureDetector(
+            onTap: () => setState(() {
+              _inlineTextRecordId = null;
+              _inlineTextColumnKey = null;
+            }),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 1),
+              child: Icon(Icons.cancel, size: 15, color: Colors.red),
+            ),
+          ),
         ],
       ),
     );
